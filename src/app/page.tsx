@@ -23,6 +23,34 @@ export default function Home() {
     localStorage.setItem("medicines", JSON.stringify(medicines));
   }, [medicines]);
 
+  // URLパラメータから通知アクションを処理
+  useEffect(() => {
+    // クライアントサイドでのみ実行
+    if (typeof window !== "undefined") {
+      const urlParams = new URLSearchParams(window.location.search);
+      const action = urlParams.get("action");
+      const id = urlParams.get("id");
+
+      // 通知から「服用しました」ボタンがクリックされた場合
+      if (action === "taken" && id) {
+        // medicine-{id} または medicine-reminder-{id} から id を抽出
+        const medicineId = id.replace("medicine-", "").replace("reminder-", "");
+
+        // 該当の薬を服用済みにする
+        if (medicineId) {
+          handleTakeMedicine(medicineId);
+
+          // URLパラメータをクリア
+          window.history.replaceState(
+            {},
+            document.title,
+            window.location.pathname
+          );
+        }
+      }
+    }
+  }, []);
+
   // 新しい薬を追加
   const handleAddMedicine = (data: {
     medicineName: string;
