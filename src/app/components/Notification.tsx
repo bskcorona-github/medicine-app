@@ -301,45 +301,34 @@ export default function Notification({
     // スマホで通知を確実に受け取るために必要なService Worker登録
     if ("serviceWorker" in navigator) {
       try {
+        // Service Workerのキャッシュをクリアするため、クエリパラメータを追加
+        const swUrl = `/sw.js?v=${new Date().getTime()}`;
+        console.log("Service Worker登録を試行:", swUrl);
+
         // 現在の登録状態を確認
         const existingRegistration =
           await navigator.serviceWorker.getRegistration();
 
-        // 既に登録されていれば再登録をスキップ
-        if (existingRegistration && existingRegistration.active) {
-          console.log(
-            "Service Worker 既に登録済み:",
-            existingRegistration.scope
-          );
-
-          // デバッグ: ServiceWorkerの状態をチェック
-          console.log("Service Worker 状態: アクティブ");
-
-          if (navigator.serviceWorker.controller) {
-            console.log(
-              "ServiceWorker コントローラー存在:",
-              navigator.serviceWorker.controller.scriptURL
-            );
-
-            // サービスワーカーが正常に動作していることを確認するためのテスト通知
-            sendDebugMessageToServiceWorker();
-
-            // プッシュ通知の許可状態を確認し必要なら許可を求める
-            handlePushPermission(existingRegistration);
-
-            return existingRegistration;
+        // 既に登録されていれば登録を解除してから再登録する
+        if (existingRegistration) {
+          console.log("既存のService Worker登録を更新します");
+          try {
+            await existingRegistration.update();
+            console.log("Service Worker更新を要求しました");
+          } catch (updateError) {
+            console.error("Service Worker更新に失敗:", updateError);
           }
         }
 
         // Service Workerを登録（新規または更新）
-        const registration = await navigator.serviceWorker.register("/sw.js", {
+        const registration = await navigator.serviceWorker.register(swUrl, {
           scope: "/",
           updateViaCache: "none", // キャッシュを使わず常に最新のService Workerを取得
         });
         console.log("Service Worker 登録成功:", registration.scope);
 
         // サービスワーカーの更新をチェック
-        registration.update().catch((error) => {
+        await registration.update().catch((error) => {
           console.error("Service Worker の更新に失敗:", error);
         });
 
@@ -347,11 +336,25 @@ export default function Notification({
         handlePushPermission(registration);
 
         // 一度テスト通知を送信
-        sendDebugMessageToServiceWorker();
+        setTimeout(() => {
+          sendDebugMessageToServiceWorker();
+        }, 2000);
 
         return registration;
       } catch (error) {
         console.error("Service Worker 登録失敗:", error);
+
+        // エラーの詳細をログに出力
+        if (error instanceof Error) {
+          console.error("エラーの詳細:", error.message);
+          console.error("スタックトレース:", error.stack);
+        }
+
+        // 再試行
+        setTimeout(() => {
+          console.log("Service Worker登録を5秒後に再試行します");
+          registerServiceWorker();
+        }, 5000);
       }
     } else {
       console.warn("このブラウザはService Workerをサポートしていません");

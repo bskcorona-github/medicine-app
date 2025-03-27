@@ -24,6 +24,7 @@ export default function InstallPWA() {
   useEffect(() => {
     // インストールプロンプトを保存する
     const handleBeforeInstallPrompt = (e: Event) => {
+      console.log("beforeinstallpromptイベント発生", e);
       e.preventDefault();
       // beforeinstallpromptイベントを保存
       setInstallPrompt(e as BeforeInstallPromptEvent);
@@ -45,11 +46,26 @@ export default function InstallPWA() {
       );
     };
 
-    setIsIOS(detectIOS());
-    setIsInstalled(isAppInstalled());
+    // 初期化処理
+    const initialize = () => {
+      console.log("PWAインストールコンポーネントを初期化中");
+      setIsIOS(detectIOS());
+      setIsInstalled(isAppInstalled());
 
+      // Androidの場合にインストールプロンプトが表示可能かどうかを確認
+      if (!detectIOS() && !isAppInstalled()) {
+        console.log("Androidデバイスでインストールボタンを準備中");
+      }
+    };
+
+    initialize();
+
+    // イベントリスナーを登録
     window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
-    window.addEventListener("appinstalled", () => setIsInstalled(true));
+    window.addEventListener("appinstalled", () => {
+      console.log("アプリがインストールされました");
+      setIsInstalled(true);
+    });
 
     return () => {
       window.removeEventListener(
@@ -60,8 +76,17 @@ export default function InstallPWA() {
   }, []);
 
   const handleInstallClick = async () => {
-    if (!installPrompt) return;
+    if (!installPrompt) {
+      console.log("インストールプロンプトが利用できません");
 
+      // プロンプトがない場合でも、マニュアルインストール方法を示す
+      alert(
+        "自動インストールができません。\n\nChromeの場合：右上のメニューから「ホーム画面に追加」を選択してください。\n\nSafariの場合：共有ボタンから「ホーム画面に追加」を選択してください。"
+      );
+      return;
+    }
+
+    console.log("インストールプロンプトを表示します");
     // プロンプトを表示
     await installPrompt.prompt();
 

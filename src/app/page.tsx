@@ -376,6 +376,45 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [medicines]);
 
+  // PWAでのインストールをサポートするための処理
+  useEffect(() => {
+    // PWAのインストール状態を確認
+    const isPwa = () => {
+      return (
+        window.matchMedia("(display-mode: standalone)").matches ||
+        (window.navigator as Navigator & { standalone?: boolean })
+          .standalone === true
+      );
+    };
+
+    // PWAとしてインストールされているかをログに記録
+    console.log(`PWAとしてインストールされている: ${isPwa()}`);
+
+    // ServiceWorkerが利用可能か確認
+    if ("serviceWorker" in navigator) {
+      // ServiceWorkerの状態を確認
+      navigator.serviceWorker
+        .getRegistration()
+        .then((registration) => {
+          if (registration) {
+            console.log("Service Worker登録済み:", registration.scope);
+
+            // Service Workerの更新を確認
+            registration.update().catch((err) => {
+              console.error("Service Worker更新エラー:", err);
+            });
+          } else {
+            console.log("Service Worker未登録");
+          }
+        })
+        .catch((err) => {
+          console.error("Service Worker確認エラー:", err);
+        });
+    } else {
+      console.warn("このブラウザはService Workerをサポートしていません");
+    }
+  }, []);
+
   return (
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="container mx-auto px-4">
