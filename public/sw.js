@@ -1,14 +1,9 @@
 // Service Worker for おくすりリマインダー
 
-const CACHE_NAME = "medicine-reminder-v1";
+const CACHE_NAME = "medicine-reminder-v2";
 
-// キャッシュするファイル
-const urlsToCache = [
-  "/",
-  "/index.html",
-  "/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav",
-  "/favicon.ico",
-];
+// キャッシュするファイル（相対パスに修正）
+const urlsToCache = ["./", "./index.html", "./favicon.ico"];
 
 // インストール時に実行
 self.addEventListener("install", (event) => {
@@ -16,10 +11,31 @@ self.addEventListener("install", (event) => {
   self.skipWaiting(); // すぐにアクティブになる
 
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      console.log("Service Worker: キャッシュを開きました");
-      return cache.addAll(urlsToCache);
-    })
+    caches
+      .open(CACHE_NAME)
+      .then((cache) => {
+        console.log("Service Worker: キャッシュを開きました");
+        // エラーをキャッチするため個別にキャッシュ
+        return Promise.all(
+          urlsToCache.map((url) => {
+            return fetch(url)
+              .then((response) => {
+                // 有効なレスポンスのみキャッシュ
+                if (!response.ok) {
+                  throw new Error(`キャッシュに失敗: ${url}`);
+                }
+                return cache.put(url, response);
+              })
+              .catch((error) => {
+                console.error(`キャッシュエラー (${url}):`, error);
+                // エラーがあっても処理を続行
+              });
+          })
+        );
+      })
+      .catch((error) => {
+        console.error("Service Worker: キャッシュ処理に失敗", error);
+      })
   );
 });
 
@@ -102,7 +118,7 @@ self.addEventListener("push", (event) => {
     body: notificationData.message || "お薬を飲む時間になりました",
     icon: "/favicon.ico",
     badge: "/favicon.ico",
-    vibrate: [200, 100, 200, 100, 200],
+    vibrate: [200, 100, 200],
     tag: notificationData.tag || "medicine-reminder",
     requireInteraction: true, // ユーザーが操作するまで通知を表示し続ける
     silent: false, // サウンドを再生

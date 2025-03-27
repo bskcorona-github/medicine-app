@@ -152,11 +152,10 @@ export default function Notification({
         "Notification" in window &&
         notificationPermission === "granted"
       ) {
-        // @ts-expect-error - WindowのNotificationオブジェクトへのアクセス
-        new Notification("お薬の時間です", {
+        // @ts-expect-error - Notificationコンストラクタの使用
+        new window.Notification("お薬の時間です", {
           body: `${medicine.name}を服用する時間です`,
           icon: "/favicon.ico", // アイコンを追加して目立たせる
-          vibrate: [200, 100, 200], // バイブレーションパターン（対応デバイスのみ）
           tag: `medicine-${medicine.id}`, // 同じタグの通知は上書きされる
           requireInteraction: true, // ユーザーがアクションを起こすまで通知を表示したままにする
         });
@@ -168,17 +167,48 @@ export default function Notification({
 
   // 通知の許可をリクエストする関数
   const requestNotificationPermission = async () => {
-    try {
-      if (typeof window !== "undefined" && "Notification" in window) {
-        // @ts-expect-error - WindowのNotificationオブジェクトへのアクセス
-        const permission = Notification.permission;
-        setNotificationPermission(permission);
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      console.warn("このブラウザはWeb通知をサポートしていません");
+      return;
+    }
 
-        if (permission !== "granted" && permission !== "denied") {
-          // 許可を求める
-          // @ts-expect-error - WindowのNotificationオブジェクトへのアクセス
+    try {
+      // Notification APIの型を定義
+      const Notification = window.Notification as {
+        permission: string;
+        requestPermission: () => Promise<string>;
+      };
+
+      // 通知の許可状態を確認
+      const permission = Notification.permission;
+      setNotificationPermission(permission);
+      console.log("現在の通知許可状態:", permission);
+
+      // まだ許可または拒否されていない場合、許可を求める
+      if (permission !== "granted" && permission !== "denied") {
+        try {
+          // モダンブラウザ向け：Promiseベースの許可リクエスト
           const newPermission = await Notification.requestPermission();
+          console.log("通知許可リクエスト結果:", newPermission);
           setNotificationPermission(newPermission);
+        } catch (error) {
+          // 古いブラウザ向け：コールバックベースの許可リクエスト
+          console.warn(
+            "通知許可のPromiseが使用できません。コールバック方式を試行します:",
+            error
+          );
+          try {
+            // @ts-expect-error - レガシーブラウザのためのフォールバック
+            window.Notification.requestPermission(function (result) {
+              console.log("通知許可リクエスト結果(コールバック):", result);
+              setNotificationPermission(result);
+            });
+          } catch (callbackError) {
+            console.error(
+              "通知許可のコールバック方式も失敗しました:",
+              callbackError
+            );
+          }
         }
       }
     } catch (error) {
@@ -208,7 +238,7 @@ export default function Notification({
           );
         } else {
           console.warn(
-            "ServiceWorker コントローラーがありません - 更新が必要かもしれません"
+            "ServiceWorkerコントローラーがありません - 更新が必要かもしれません"
           );
           // 強制的に更新を試みる
           registration.update();
@@ -222,17 +252,23 @@ export default function Notification({
         // プッシュ通知の許可を求める
         if (registration.pushManager) {
           try {
-            // @ts-expect-error - WindowのNotificationオブジェクトへのアクセス
-            if (Notification.permission === "granted") {
+            if (notificationPermission === "granted") {
               // デバッグ: プッシュ通知のサブスクリプション状態をチェック
-              registration.pushManager.getSubscription().then(subscription => {
-                if (subscription) {
-                  console.log("既存のプッシュ通知サブスクリプション:", subscription.endpoint);
-                } else {
-                  console.log("プッシュ通知サブスクリプションがありません、新規作成します");
-                }
-              });
-              
+              registration.pushManager
+                .getSubscription()
+                .then((subscription) => {
+                  if (subscription) {
+                    console.log(
+                      "既存のプッシュ通知サブスクリプション:",
+                      subscription.endpoint
+                    );
+                  } else {
+                    console.log(
+                      "プッシュ通知サブスクリプションがありません、新規作成します"
+                    );
+                  }
+                });
+
               const subscription = await registration.pushManager.subscribe({
                 userVisibleOnly: true,
                 applicationServerKey: urlBase64ToUint8Array(
@@ -241,8 +277,10 @@ export default function Notification({
               });
               console.log("プッシュ通知の登録成功:", subscription.endpoint);
             } else {
-              // @ts-expect-error - WindowのNotificationオブジェクトへのアクセス
-              console.warn("プッシュ通知の許可がありません:", Notification.permission);
+              console.warn(
+                "プッシュ通知の許可がありません:",
+                notificationPermission
+              );
             }
           } catch (pushError) {
             console.error("プッシュ通知の登録に失敗:", pushError);
@@ -448,8 +486,8 @@ export default function Notification({
               "Notification" in window &&
               notificationPermission === "granted"
             ) {
-              // @ts-expect-error - WindowのNotificationオブジェクトへのアクセス
-              new Notification("お薬を飲み忘れていませんか？", {
+              // リマインダー通知を表示
+              new window.Notification("お薬を飲み忘れていませんか？", {
                 body: `${notificationMedicine.name}をまだ飲んでいないようです`,
                 icon: "/favicon.ico", // アイコンを追加
                 requireInteraction: true, // ユーザーの操作があるまで通知を表示し続ける
