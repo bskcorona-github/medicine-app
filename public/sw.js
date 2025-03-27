@@ -248,78 +248,63 @@ self.addEventListener("message", (event) => {
     console.log("Service Worker: デバッグテストメッセージを受信", event.data);
 
     // 応答を送信
-    if (event.source) {
-      event.source.postMessage({
-        type: "DEBUG_RESPONSE",
-        time: new Date().toISOString(),
-        status: "OK",
-        serviceWorkerState: self.registration ? "登録済み" : "未登録",
-      });
-      console.log("Service Worker: デバッグ応答を送信しました");
-    }
+    self.clients.matchAll().then((clients) => {
+      if (clients && clients.length) {
+        clients.forEach((client) => {
+          client.postMessage({
+            type: "DEBUG_RESPONSE",
+            message:
+              "デバッグテスト通知　service workerが正常に動作しています。",
+            time: new Date().toISOString(),
+          });
+        });
+      }
+    });
 
-    // 5秒後にテスト通知を送信（デバッグ用）
-    setTimeout(() => {
-      self.registration
-        .showNotification("デバッグテスト通知", {
-          body: "Service Workerが正常に動作しています",
-          icon: "/favicon.ico",
-          badge: "/favicon.ico",
-          vibrate: [200, 100, 200],
-          tag: "debug-test",
-          requireInteraction: true,
-          actions: [
-            {
-              action: "test",
-              title: "テスト",
-            },
-          ],
-        })
-        .then(() => console.log("Service Worker: デバッグテスト通知を表示"))
-        .catch((error) =>
-          console.error("Service Worker: デバッグテスト通知に失敗", error)
-        );
-    }, 5000);
+    // テスト通知を表示
+    self.registration.showNotification("デバッグテスト通知", {
+      body: "service workerが正常に動作しています。",
+      icon: "/favicon.ico",
+      tag: "debug-test",
+    });
   }
 
   // スケジュールされた通知を処理
   if (event.data && event.data.type === "SCHEDULE_NOTIFICATION") {
-    console.log("Service Worker: スケジュールされた通知を処理", event.data);
+    console.log("Service Worker: スケジュール通知を受信", event.data);
 
-    const medicine = event.data.medicine;
-    if (!medicine) {
-      console.error("Service Worker: 通知データが不完全です");
-      return;
-    }
-
-    // 通知を表示
-    const title = "お薬の時間です";
-    const options = {
-      body: `${medicine.name}を服用する時間です`,
-      icon: "/favicon.ico",
-      badge: "/favicon.ico",
-      vibrate: [200, 100, 200, 100, 200],
-      tag: medicine.tag || `medicine-${medicine.id}`,
-      requireInteraction: true,
-      silent: false,
-      renotify: true,
-      actions: [
-        {
-          action: "taken",
-          title: "服用しました",
-        },
-        {
-          action: "later",
-          title: "後で",
-        },
-      ],
+    const medicine = event.data.medicine || {
+      id: "unknown",
+      name: "お薬",
+      tag: "medicine-unknown",
     };
 
+    // 通知を表示
     self.registration
-      .showNotification(title, options)
+      .showNotification("お薬の時間です", {
+        body: `${medicine.name}を服用する時間です`,
+        icon: "/favicon.ico",
+        badge: "/favicon.ico",
+        vibrate: [200, 100, 200],
+        tag: medicine.tag || `medicine-${medicine.id}`,
+        requireInteraction: true,
+        renotify: true,
+        silent: false,
+        actions: [
+          {
+            action: "taken",
+            title: "服用しました",
+          },
+          {
+            action: "later",
+            title: "後で",
+          },
+        ],
+      })
       .then(() => {
-        console.log("Service Worker: スケジュールされた通知を表示しました");
-        // クライアントに音声再生メッセージを送信
+        console.log("Service Worker: スケジュール通知を表示しました");
+
+        // 音声を再生するためにクライアントを起こす
         return self.clients.matchAll({
           type: "window",
           includeUncontrolled: true,
@@ -327,10 +312,11 @@ self.addEventListener("message", (event) => {
       })
       .then((clients) => {
         if (clients.length === 0) {
-          // クライアントがなければ新しいウィンドウを開く
-          const url = self.registration.scope + "?notification=sound";
+          // クライアントがなければ、バックグラウンドで音声を再生するためのメッセージを送信
+          const url =
+            self.registration.scope + `?notification=sound&id=${medicine.id}`;
           console.log(
-            "Service Worker: スケジュール通知 - クライアントを起動します",
+            "Service Worker: 通知のためにクライアントを起動します",
             url
           );
           return self.clients.openWindow(url);
@@ -345,7 +331,10 @@ self.addEventListener("message", (event) => {
         });
       })
       .catch((error) => {
-        console.error("Service Worker: スケジュール通知の表示に失敗", error);
+        console.error(
+          "Service Worker: 通知表示中にエラーが発生しました",
+          error
+        );
       });
   }
 });

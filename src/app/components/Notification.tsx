@@ -350,76 +350,97 @@ export default function Notification({
   }, [registerServiceWorker]);
 
   // 定期的な通知をスケジュールする関数
-  const scheduleNotification = useCallback(async (medicine: Medicine) => {
-    if ("serviceWorker" in navigator && "Notification" in window) {
-      try {
-        // @ts-expect-error - WindowのNotificationオブジェクトへのアクセス
-        if (Notification.permission !== "granted") {
-          console.log("通知の許可がありません");
-          return;
-        }
-
-        // 現在時刻から次の通知時刻を計算
-        const now = new Date();
-        const [hours, minutes] = medicine.time.split(":").map(Number);
-        const notificationTime = new Date();
-        notificationTime.setHours(hours, minutes, 0, 0);
-
-        // 時間が過ぎていたら明日の同じ時間にスケジュール
-        if (notificationTime < now) {
-          notificationTime.setDate(notificationTime.getDate() + 1);
-        }
-
-        // 通知までの待機時間（ミリ秒）
-        const waitTime = notificationTime.getTime() - now.getTime();
-        console.log(
-          `${medicine.name}の通知を${waitTime}ミリ秒後にスケジュール`
-        );
-
-        // シミュレートされたプッシュ通知をスケジュール
-        setTimeout(async () => {
-          try {
-            // ServiceWorkerの登録を取得
-            const swRegistration = await navigator.serviceWorker.ready;
-
-            // カスタムのプッシュイベントをシミュレート
-            if (navigator.serviceWorker.controller) {
-              navigator.serviceWorker.controller.postMessage({
-                type: "SCHEDULE_NOTIFICATION",
-                medicine: {
-                  id: medicine.id,
-                  name: medicine.name,
-                  tag: `medicine-${medicine.id}`,
-                },
-              });
-              console.log(`${medicine.name}の通知メッセージを送信しました`);
-            } else {
-              console.warn("ServiceWorkerコントローラーがありません");
-
-              // 代替手段としてローカル通知を使用
-              swRegistration.showNotification("お薬の時間です", {
-                body: `${medicine.name}を服用する時間です`,
-                icon: "/favicon.ico",
-                tag: `medicine-${medicine.id}`,
-                requireInteraction: true,
-              });
-            }
-          } catch (error) {
-            console.error("通知のスケジュールに失敗:", error);
+  const scheduleNotification = useCallback(
+    async (medicine: Medicine) => {
+      if ("serviceWorker" in navigator && "Notification" in window) {
+        try {
+          // 通知の許可状態を確認
+          if (notificationPermission !== "granted") {
+            console.log("通知の許可がありません");
+            return;
           }
-        }, waitTime);
 
-        // 毎日の通知の場合は24時間後にも再スケジュール
-        if (medicine.daily) {
-          setTimeout(() => {
-            scheduleNotification(medicine);
-          }, 24 * 60 * 60 * 1000);
+          // 現在時刻から次の通知時刻を計算
+          const now = new Date();
+          const [hours, minutes] = medicine.time.split(":").map(Number);
+          const notificationTime = new Date();
+          notificationTime.setHours(hours, minutes, 0, 0);
+
+          // 時間が過ぎていたら明日の同じ時間にスケジュール
+          if (notificationTime < now) {
+            notificationTime.setDate(notificationTime.getDate() + 1);
+          }
+
+          // 通知までの待機時間（ミリ秒）
+          const waitTime = notificationTime.getTime() - now.getTime();
+          console.log(
+            `【通知スケジュール】${
+              medicine.name
+            }の通知を${waitTime}ミリ秒後（${new Date(
+              now.getTime() + waitTime
+            ).toLocaleString()}）にスケジュール`
+          );
+
+          // シミュレートされたプッシュ通知をスケジュール
+          setTimeout(async () => {
+            try {
+              console.log(`【通知実行】${medicine.name}の通知時間になりました`);
+
+              // ServiceWorkerの登録を取得
+              const swRegistration = await navigator.serviceWorker.ready;
+
+              // カスタムのプッシュイベントをシミュレート
+              if (navigator.serviceWorker.controller) {
+                navigator.serviceWorker.controller.postMessage({
+                  type: "SCHEDULE_NOTIFICATION",
+                  medicine: {
+                    id: medicine.id,
+                    name: medicine.name,
+                    tag: `medicine-${medicine.id}`,
+                  },
+                });
+                console.log(
+                  `${medicine.name}の通知メッセージをServiceWorkerに送信しました`
+                );
+
+                // フォールバックとしてローカル通知も表示
+                showNotificationAlert(medicine);
+              } else {
+                console.warn(
+                  "ServiceWorkerコントローラーがありません - ローカル通知を表示します"
+                );
+
+                // ローカル通知を使用
+                swRegistration.showNotification("お薬の時間です", {
+                  body: `${medicine.name}を服用する時間です`,
+                  icon: "/favicon.ico",
+                  tag: `medicine-${medicine.id}`,
+                  requireInteraction: true,
+                });
+
+                // アプリ内通知も表示
+                showNotificationAlert(medicine);
+              }
+            } catch (error) {
+              console.error("通知のスケジュールに失敗:", error);
+              // エラーが発生した場合でもアプリ内通知は表示
+              showNotificationAlert(medicine);
+            }
+          }, waitTime);
+
+          // 毎日の通知の場合は24時間後にも再スケジュール
+          if (medicine.daily) {
+            setTimeout(() => {
+              scheduleNotification(medicine);
+            }, 24 * 60 * 60 * 1000);
+          }
+        } catch (error) {
+          console.error("通知スケジュールに失敗:", error);
         }
-      } catch (error) {
-        console.error("通知スケジュールに失敗:", error);
       }
-    }
-  }, []);
+    },
+    [showNotificationAlert, notificationPermission]
+  );
 
   // 1分ごとに薬の時間をチェック
   useEffect(() => {
