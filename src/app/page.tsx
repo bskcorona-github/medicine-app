@@ -1,14 +1,17 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { v4 as uuidv4 } from "uuid";
 import MedicineForm from "./components/MedicineForm";
 import MedicineList, { Medicine } from "./components/MedicineList";
 import Notification from "./components/Notification";
 import TimeDisplay from "./components/TimeDisplay";
+import InstallPWA from "./components/InstallPWA";
 
 export default function Home() {
   const [medicines, setMedicines] = useState<Medicine[]>([]);
+  // 音声再生用ref
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // ローカルストレージからデータを読み込む
   useEffect(() => {
@@ -30,6 +33,7 @@ export default function Home() {
       const urlParams = new URLSearchParams(window.location.search);
       const action = urlParams.get("action");
       const id = urlParams.get("id");
+      const notification = urlParams.get("notification");
 
       // 通知から「服用しました」ボタンがクリックされた場合
       if (action === "taken" && id) {
@@ -48,8 +52,80 @@ export default function Home() {
           );
         }
       }
+
+      // 通知音を再生する場合
+      if (notification === "sound") {
+        playNotificationSound();
+        // URLパラメータをクリア
+        window.history.replaceState(
+          {},
+          document.title,
+          window.location.pathname
+        );
+      }
     }
   }, []);
+
+  // Service Workerからのメッセージを受信する
+  useEffect(() => {
+    // 音声要素の作成
+    const audio = new Audio(
+      "/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav"
+    );
+    audioRef.current = audio;
+
+    // Service Workerからのメッセージリスナー
+    const handleServiceWorkerMessage = (event: MessageEvent) => {
+      console.log(
+        "メインスレッド: Service Workerからメッセージを受信",
+        event.data
+      );
+
+      if (event.data && event.data.type === "PLAY_NOTIFICATION_SOUND") {
+        // 音声を再生
+        playNotificationSound();
+
+        // 薬のIDが含まれていれば、その薬を取得して通知表示
+        if (event.data.medicineId) {
+          const medicine = medicines.find(
+            (m) => m.id === event.data.medicineId
+          );
+          if (medicine) {
+            // 通知コンポーネントに薬の情報を渡して表示する処理をここに追加できる
+            console.log("特定の薬の通知:", medicine);
+          }
+        }
+      }
+    };
+
+    // メッセージリスナーを登録
+    navigator.serviceWorker.addEventListener(
+      "message",
+      handleServiceWorkerMessage
+    );
+
+    // クリーンアップ関数
+    return () => {
+      navigator.serviceWorker.removeEventListener(
+        "message",
+        handleServiceWorkerMessage
+      );
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, [medicines]);
+
+  // 通知音を再生する関数
+  const playNotificationSound = () => {
+    if (audioRef.current) {
+      audioRef.current.currentTime = 0;
+      audioRef.current.play().catch((error) => {
+        console.error("音声再生に失敗しました:", error);
+      });
+    }
+  };
 
   // 新しい薬を追加
   const handleAddMedicine = (data: {
@@ -117,6 +193,8 @@ export default function Home() {
           medicines={medicines}
           onNotificationClick={handleTakeMedicine}
         />
+
+        <InstallPWA />
       </div>
     </div>
   );
