@@ -5,6 +5,9 @@ const CACHE_NAME = "medicine-reminder-v2";
 // キャッシュするファイル（相対パスに修正）
 const urlsToCache = ["./", "./index.html", "./favicon.ico"];
 
+// 通知スケジュールを保存する変数
+let notificationSchedules = [];
+
 // インストール時に実行
 self.addEventListener("install", (event) => {
   console.log("Service Worker: インストール中");
@@ -61,6 +64,160 @@ self.addEventListener("activate", (event) => {
     })
   );
 });
+
+// Service Workerがアクティブになったらスケジュールと定期チェックを開始
+loadSchedulesFromIndexedDB();
+setPeriodicNotificationCheck();
+
+// 定期的に通知をチェックする
+function setPeriodicNotificationCheck() {
+  // 通知スケジュールを1分ごとにチェック
+  setInterval(checkScheduledNotifications, 60000);
+
+  // 初回チェック
+  checkScheduledNotifications();
+}
+
+// IndexedDBから通知スケジュールを読み込む
+function loadSchedulesFromIndexedDB() {
+  if ("indexedDB" in self) {
+    const request = indexedDB.open("medicineReminderDB", 1);
+
+    request.onupgradeneeded = function (event) {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains("notificationSchedules")) {
+        db.createObjectStore("notificationSchedules", { keyPath: "id" });
+      }
+    };
+
+    request.onsuccess = function (event) {
+      const db = event.target.result;
+      const transaction = db.transaction(["notificationSchedules"], "readonly");
+      const store = transaction.objectStore("notificationSchedules");
+      const getAllRequest = store.getAll();
+
+      getAllRequest.onsuccess = function () {
+        notificationSchedules = getAllRequest.result || [];
+        console.log(
+          `Service Worker: ${notificationSchedules.length}件の通知スケジュールを読み込みました`
+        );
+
+        // スケジュールを読み込んだ後に通知をチェック
+        checkScheduledNotifications();
+      };
+
+      getAllRequest.onerror = function (error) {
+        console.error("Service Worker: スケジュール読み込みエラー", error);
+      };
+    };
+
+    request.onerror = function (error) {
+      console.error("Service Worker: IndexedDB接続エラー", error);
+    };
+  }
+}
+
+// IndexedDBに通知スケジュールを保存
+function saveSchedulesToIndexedDB() {
+  if ("indexedDB" in self) {
+    const request = indexedDB.open("medicineReminderDB", 1);
+
+    request.onsuccess = function (event) {
+      const db = event.target.result;
+      const transaction = db.transaction(
+        ["notificationSchedules"],
+        "readwrite"
+      );
+      const store = transaction.objectStore("notificationSchedules");
+
+      // 既存のデータを削除
+      const clearRequest = store.clear();
+
+      clearRequest.onsuccess = function () {
+        // 新しいスケジュールを追加
+        notificationSchedules.forEach((schedule) => {
+          store.add(schedule);
+        });
+
+        console.log(
+          `Service Worker: ${notificationSchedules.length}件の通知スケジュールを保存しました`
+        );
+      };
+
+      clearRequest.onerror = function (error) {
+        console.error("Service Worker: スケジュールクリアエラー", error);
+      };
+    };
+
+    request.onerror = function (error) {
+      console.error("Service Worker: IndexedDB接続エラー", error);
+    };
+  }
+}
+
+// スケジュールされた通知をチェックし、時間になったものを表示
+function checkScheduledNotifications() {
+  const now = Date.now();
+
+  notificationSchedules.forEach((schedule, index) => {
+    // 通知時刻になったかチェック
+    if (schedule.nextNotification <= now) {
+      console.log(`Service Worker: 通知時刻になりました - ${schedule.name}`);
+
+      // 通知を表示
+      self.registration.showNotification("お薬の時間です", {
+        body: `${schedule.name}を服用する時間です`,
+        icon: "/favicon.ico",
+        badge: "/favicon.ico",
+        vibrate: [200, 100, 200],
+        tag: `medicine-${schedule.id}`,
+        requireInteraction: true,
+        renotify: true,
+        silent: false,
+        actions: [
+          {
+            action: "taken",
+            title: "服用しました",
+          },
+          {
+            action: "later",
+            title: "後で",
+          },
+        ],
+      });
+
+      // 毎日の通知の場合は次の日の同じ時刻に再スケジュール
+      if (schedule.daily) {
+        // time形式から時間と分を抽出
+        const [hours, minutes] = schedule.time.split(":").map(Number);
+
+        // 翌日の同じ時刻を設定
+        const nextNotification = new Date();
+        nextNotification.setHours(hours, minutes, 0, 0);
+
+        // 時間が過ぎていたら翌日にする
+        if (nextNotification.getTime() <= now) {
+          nextNotification.setDate(nextNotification.getDate() + 1);
+        }
+
+        // スケジュールを更新
+        notificationSchedules[index].nextNotification =
+          nextNotification.getTime();
+        console.log(
+          `Service Worker: 次回通知を設定 - ${schedule.name} (${new Date(
+            nextNotification.getTime()
+          ).toLocaleString()})`
+        );
+      } else {
+        // 毎日でない場合はスケジュールから削除
+        notificationSchedules.splice(index, 1);
+      }
+
+      // 変更をIndexedDBに保存
+      saveSchedulesToIndexedDB();
+    }
+  });
+}
 
 // フェッチ時に実行（キャッシュがあればそれを返す）
 self.addEventListener("fetch", (event) => {
@@ -336,5 +493,42 @@ self.addEventListener("message", (event) => {
           error
         );
       });
+  }
+
+  // 長期通知スケジュールを登録
+  if (event.data && event.data.type === "REGISTER_NOTIFICATION_SCHEDULE") {
+    console.log("Service Worker: 通知スケジュール登録を受信", event.data);
+
+    if (event.data.medicine) {
+      const medicine = event.data.medicine;
+
+      // 既存のスケジュールを確認
+      const existingIndex = notificationSchedules.findIndex(
+        (s) => s.id === medicine.id
+      );
+
+      if (existingIndex >= 0) {
+        // 既存のスケジュールを更新
+        notificationSchedules[existingIndex] = medicine;
+      } else {
+        // 新しいスケジュールを追加
+        notificationSchedules.push(medicine);
+      }
+
+      // IndexedDBに保存
+      saveSchedulesToIndexedDB();
+
+      console.log(
+        `Service Worker: 通知スケジュールを登録しました - ${
+          medicine.name
+        } (次回: ${new Date(medicine.nextNotification).toLocaleString()})`
+      );
+    }
+  }
+
+  // 通知スケジュールをチェック（クライアントからの定期的な呼び出し）
+  if (event.data && event.data.type === "CHECK_NOTIFICATION_SCHEDULES") {
+    console.log("Service Worker: 通知スケジュールチェックリクエストを受信");
+    checkScheduledNotifications();
   }
 });

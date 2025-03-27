@@ -340,14 +340,87 @@ export default function Notification({
     audio.preload = "auto"; // 事前に読み込み
     audioRef.current = audio;
 
+    // ローカルストレージから通知スケジュールを読み込み
+    try {
+      const schedulesJson =
+        localStorage.getItem("notificationSchedules") || "[]";
+      const schedules = JSON.parse(schedulesJson);
+
+      if (schedules.length > 0) {
+        console.log(
+          `保存された${schedules.length}件の通知スケジュールを読み込みました`
+        );
+
+        // ページが開かれた時点で未来の通知のみを再スケジュール
+        const now = new Date().getTime();
+        schedules.forEach(
+          (schedule: {
+            id: string;
+            name: string;
+            time: string;
+            nextNotification: number;
+            daily: boolean;
+          }) => {
+            // 次の通知時刻が過去の場合は、新しい通知時刻を計算
+            if (schedule.nextNotification < now) {
+              // 時刻を解析
+              const [hours, minutes] = schedule.time.split(":").map(Number);
+              const nextDate = new Date();
+              nextDate.setHours(hours, minutes, 0, 0);
+
+              // 今日の指定時刻がすでに過ぎている場合は明日にスケジュール
+              if (nextDate.getTime() < now) {
+                nextDate.setDate(nextDate.getDate() + 1);
+              }
+
+              schedule.nextNotification = nextDate.getTime();
+            }
+
+            // 通知時刻までの待機時間
+            const waitTime = schedule.nextNotification - now;
+
+            // 薬の情報から通知を再スケジュール
+            console.log(
+              `保存されたスケジュールから ${schedule.name} の通知を ${waitTime}ms 後に再設定します`
+            );
+
+            setTimeout(() => {
+              // 該当する薬を現在のリストから探す
+              const medicine = medicines.find((m) => m.id === schedule.id);
+              if (medicine && !medicine.taken) {
+                // 見つかった場合は通知を表示
+                console.log(
+                  `保存されたスケジュールから ${schedule.name} の通知時間になりました`
+                );
+                showNotificationAlert(medicine);
+              }
+            }, waitTime);
+          }
+        );
+      }
+    } catch (error) {
+      console.error("保存された通知スケジュールの読み込みに失敗:", error);
+    }
+
+    // ServiceWorkerを定期的に起こして通知をチェック（バックグラウンドでも動作させるため）
+    const wakeInterval = setInterval(() => {
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: "CHECK_NOTIFICATION_SCHEDULES",
+          time: new Date().toISOString(),
+        });
+      }
+    }, 60000); // 1分ごとに確認
+
     // コンポーネントのアンマウント時にクリーンアップ
     return () => {
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current = null;
       }
+      clearInterval(wakeInterval);
     };
-  }, [registerServiceWorker]);
+  }, [registerServiceWorker, medicines, showNotificationAlert]);
 
   // 定期的な通知をスケジュールする関数
   const scheduleNotification = useCallback(
@@ -380,6 +453,65 @@ export default function Notification({
               now.getTime() + waitTime
             ).toLocaleString()}）にスケジュール`
           );
+
+          // ローカルストレージに通知予定を保存（アプリが閉じても通知されるため）
+          try {
+            // 既存のスケジュールを取得
+            const schedulesJson =
+              localStorage.getItem("notificationSchedules") || "[]";
+            const schedules = JSON.parse(schedulesJson);
+
+            // 新しいスケジュールを追加（同じIDの薬がある場合は更新）
+            const scheduleIndex = schedules.findIndex(
+              (s: { id: string }) => s.id === medicine.id
+            );
+            const newSchedule = {
+              id: medicine.id,
+              name: medicine.name,
+              time: medicine.time,
+              nextNotification: notificationTime.getTime(),
+              daily: medicine.daily,
+            };
+
+            if (scheduleIndex >= 0) {
+              schedules[scheduleIndex] = newSchedule;
+            } else {
+              schedules.push(newSchedule);
+            }
+
+            // スケジュールを保存
+            localStorage.setItem(
+              "notificationSchedules",
+              JSON.stringify(schedules)
+            );
+            console.log(
+              `通知スケジュールをローカルストレージに保存: ${medicine.name}`
+            );
+          } catch (storageError) {
+            console.error("スケジュール保存エラー:", storageError);
+          }
+
+          // ServiceWorkerに長期通知をスケジュール
+          try {
+            await navigator.serviceWorker.ready;
+            if (navigator.serviceWorker.controller) {
+              navigator.serviceWorker.controller.postMessage({
+                type: "REGISTER_NOTIFICATION_SCHEDULE",
+                medicine: {
+                  id: medicine.id,
+                  name: medicine.name,
+                  time: medicine.time,
+                  nextNotification: notificationTime.getTime(),
+                  daily: medicine.daily,
+                },
+              });
+              console.log(
+                `${medicine.name}の長期通知スケジュールをServiceWorkerに登録しました`
+              );
+            }
+          } catch (swError) {
+            console.error("ServiceWorkerスケジュール登録エラー:", swError);
+          }
 
           // シミュレートされたプッシュ通知をスケジュール
           setTimeout(async () => {
