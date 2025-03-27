@@ -8,7 +8,7 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 interface WindowWithStandalone extends Window {
-  MSStream?: any; // MSStreamはTypeScriptの型定義に含まれていないため
+  MSStream?: unknown; // MSStreamはTypeScriptの型定義に含まれていないため
   navigator: Navigator & {
     standalone?: boolean; // iOS Safariのスタンドアロンモード判定用
   };

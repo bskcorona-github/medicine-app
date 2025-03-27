@@ -209,7 +209,7 @@ export default function Notification({
         audioRef.current = null;
       }
     };
-  }, []);
+  }, [registerServiceWorker]);
 
   // 1分ごとに薬の時間をチェック
   useEffect(() => {
@@ -291,6 +291,7 @@ export default function Notification({
     showNotification,
     medicines,
     notificationPermission,
+    playNotificationSound,
   ]);
 
   if (!showNotification || !notificationMedicine) return null;

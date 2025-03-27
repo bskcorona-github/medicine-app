@@ -26,6 +26,41 @@ export default function Home() {
     localStorage.setItem("medicines", JSON.stringify(medicines));
   }, [medicines]);
 
+  // 通知音を再生する関数
+  const playNotificationSound = () => {
+    if (audioRef.current) {
+      audioRef.current.currentTime = 0;
+      audioRef.current.play().catch((error) => {
+        console.error("音声再生に失敗しました:", error);
+      });
+    }
+  };
+
+  // 新しい薬を追加
+  const handleAddMedicine = (data: {
+    medicineName: string;
+    time: string;
+    daily: boolean;
+  }) => {
+    const newMedicine: Medicine = {
+      id: uuidv4(),
+      name: data.medicineName,
+      time: data.time,
+      taken: false,
+      daily: data.daily,
+    };
+    setMedicines([...medicines, newMedicine]);
+  };
+
+  // 薬を服用済みにする
+  const handleTakeMedicine = (id: string) => {
+    setMedicines(
+      medicines.map((medicine) =>
+        medicine.id === id ? { ...medicine, taken: true } : medicine
+      )
+    );
+  };
+
   // URLパラメータから通知アクションを処理
   useEffect(() => {
     // クライアントサイドでのみ実行
@@ -64,7 +99,7 @@ export default function Home() {
         );
       }
     }
-  }, []);
+  }, [handleTakeMedicine, playNotificationSound]);
 
   // Service Workerからのメッセージを受信する
   useEffect(() => {
@@ -115,42 +150,7 @@ export default function Home() {
         audioRef.current = null;
       }
     };
-  }, [medicines]);
-
-  // 通知音を再生する関数
-  const playNotificationSound = () => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-      audioRef.current.play().catch((error) => {
-        console.error("音声再生に失敗しました:", error);
-      });
-    }
-  };
-
-  // 新しい薬を追加
-  const handleAddMedicine = (data: {
-    medicineName: string;
-    time: string;
-    daily: boolean;
-  }) => {
-    const newMedicine: Medicine = {
-      id: uuidv4(),
-      name: data.medicineName,
-      time: data.time,
-      taken: false,
-      daily: data.daily,
-    };
-    setMedicines([...medicines, newMedicine]);
-  };
-
-  // 薬を服用済みにする
-  const handleTakeMedicine = (id: string) => {
-    setMedicines(
-      medicines.map((medicine) =>
-        medicine.id === id ? { ...medicine, taken: true } : medicine
-      )
-    );
-  };
+  }, [medicines, playNotificationSound]);
 
   // 日付が変わったら服用状態をリセット
   useEffect(() => {
