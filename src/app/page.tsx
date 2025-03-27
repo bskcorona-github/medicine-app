@@ -62,12 +62,62 @@ export default function Home() {
   // 薬を削除する
   const handleDeleteMedicine = useCallback((id: string) => {
     setMedicines((prev) => prev.filter((medicine) => medicine.id !== id));
+
+    // ローカルストレージから関連する通知スケジュールも削除
+    try {
+      const schedulesJson =
+        localStorage.getItem("notificationSchedules") || "[]";
+      const schedules = JSON.parse(schedulesJson);
+      const filteredSchedules = schedules.filter(
+        (schedule: { id: string }) => schedule.id !== id
+      );
+      localStorage.setItem(
+        "notificationSchedules",
+        JSON.stringify(filteredSchedules)
+      );
+      console.log(
+        `薬ID: ${id}の通知スケジュールをローカルストレージから削除しました`
+      );
+
+      // ServiceWorkerに削除を通知
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: "REMOVE_NOTIFICATION_SCHEDULE",
+          medicineId: id,
+        });
+        console.log(
+          `薬ID: ${id}の通知スケジュール削除をServiceWorkerに依頼しました`
+        );
+      }
+    } catch (error) {
+      console.error("通知スケジュールの削除に失敗しました:", error);
+    }
   }, []);
 
   // すべての薬を削除する
   const handleDeleteAllMedicines = useCallback(() => {
     if (window.confirm("すべてのお薬を削除してもよろしいですか？")) {
       setMedicines([]);
+
+      // ローカルストレージからすべての通知スケジュールを削除
+      try {
+        localStorage.setItem("notificationSchedules", "[]");
+        console.log(
+          "すべての通知スケジュールをローカルストレージから削除しました"
+        );
+
+        // ServiceWorkerにすべての削除を通知
+        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+          navigator.serviceWorker.controller.postMessage({
+            type: "REMOVE_ALL_NOTIFICATION_SCHEDULES",
+          });
+          console.log(
+            "すべての通知スケジュール削除をServiceWorkerに依頼しました"
+          );
+        }
+      } catch (error) {
+        console.error("すべての通知スケジュールの削除に失敗しました:", error);
+      }
     }
   }, []);
 

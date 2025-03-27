@@ -500,147 +500,52 @@ self.addEventListener("notificationclick", (event) => {
 
 // メッセージ受信時の処理
 self.addEventListener("message", (event) => {
-  console.log("Service Worker: メッセージを受信", event.data);
+  const data = event.data;
+  console.log("Service Worker: メッセージを受信", data);
 
-  if (event.data && event.data.type === "SKIP_WAITING") {
-    self.skipWaiting();
-  }
-
-  // デバッグテストメッセージを処理
-  if (event.data && event.data.type === "DEBUG_TEST") {
-    console.log("Service Worker: デバッグテストメッセージを受信", event.data);
-
-    // 応答を送信
-    self.clients.matchAll().then((clients) => {
-      if (clients && clients.length) {
-        clients.forEach((client) => {
-          client.postMessage({
-            type: "DEBUG_RESPONSE",
-            message:
-              "デバッグテスト通知　service workerが正常に動作しています。",
-            time: new Date().toISOString(),
-          });
-        });
-      }
-    });
-
-    // テスト通知を表示
-    self.registration.showNotification("デバッグテスト通知", {
-      body: "service workerが正常に動作しています。",
-      icon: "/icon/favicon.ico",
-      badge: "/icon/favicon.ico",
-      vibrate: [200, 100, 200],
-      tag: "debug-test",
-      requireInteraction: true,
-      renotify: true,
-      silent: false,
+  if (data.type === "DEBUG_TEST") {
+    console.log("Service Worker: デバッグテストメッセージを受信", data.time);
+    event.source.postMessage({
+      type: "DEBUG_RESPONSE",
+      message: "デバッグテストを受け取りました",
+      time: new Date().toISOString(),
     });
   }
 
-  // スケジュールされた通知を処理
-  if (event.data && event.data.type === "SCHEDULE_NOTIFICATION") {
-    console.log("Service Worker: スケジュール通知を受信", event.data);
-
-    const medicine = event.data.medicine || {
-      id: "unknown",
-      name: "お薬",
-      tag: "medicine-unknown",
-    };
-
-    // 通知を表示
-    self.registration
-      .showNotification("お薬の時間です", {
-        body: `${medicine.name}を服用する時間です`,
-        icon: "/icon/favicon.ico",
-        badge: "/icon/favicon.ico",
-        vibrate: [200, 100, 200],
-        tag: medicine.tag || `medicine-${medicine.id}`,
-        requireInteraction: true,
-        renotify: true,
-        silent: false,
-        actions: [
-          {
-            action: "taken",
-            title: "服用しました",
-          },
-          {
-            action: "later",
-            title: "後で",
-          },
-        ],
-      })
-      .then(() => {
-        console.log("Service Worker: スケジュール通知を表示しました");
-
-        // 音声を再生するためにクライアントを起こす
-        return self.clients.matchAll({
-          type: "window",
-          includeUncontrolled: true,
-        });
-      })
-      .then((clients) => {
-        if (clients.length === 0) {
-          // クライアントがなければ、バックグラウンドで音声を再生するためのメッセージを送信
-          const url =
-            self.registration.scope + `?notification=sound&id=${medicine.id}`;
-          console.log(
-            "Service Worker: 通知のためにクライアントを起動します",
-            url
-          );
-          return self.clients.openWindow(url);
-        }
-
-        // クライアントがある場合はメッセージを送信
-        clients.forEach((client) => {
-          client.postMessage({
-            type: "PLAY_NOTIFICATION_SOUND",
-            medicineId: medicine.id || "",
-          });
-        });
-      })
-      .catch((error) => {
-        console.error(
-          "Service Worker: 通知表示中にエラーが発生しました",
-          error
-        );
-      });
+  if (data.type === "SCHEDULE_NOTIFICATION") {
+    console.log("Service Worker: 通知スケジュールリクエスト", data.medicine);
+    showNotification(data.medicine);
   }
 
-  // 長期通知スケジュールを登録
-  if (event.data && event.data.type === "REGISTER_NOTIFICATION_SCHEDULE") {
-    console.log("Service Worker: 通知スケジュール登録を受信", event.data);
-
-    if (event.data.medicine) {
-      const medicine = event.data.medicine;
-
-      // 既存のスケジュールを確認
-      const existingIndex = notificationSchedules.findIndex(
-        (s) => s.id === medicine.id
-      );
-
-      if (existingIndex >= 0) {
-        // 既存のスケジュールを更新
-        notificationSchedules[existingIndex] = medicine;
-      } else {
-        // 新しいスケジュールを追加
-        notificationSchedules.push(medicine);
-      }
-
-      // IndexedDBに保存
-      saveSchedulesToIndexedDB();
-
-      console.log(
-        `Service Worker: 通知スケジュールを登録しました - ${
-          medicine.name
-        } (次回: ${new Date(medicine.nextNotification).toLocaleString()})`
-      );
-    }
-  }
-
-  // 通知スケジュールをチェック（クライアントからの定期的な呼び出し）
-  if (event.data && event.data.type === "CHECK_NOTIFICATION_SCHEDULES") {
-    console.log("Service Worker: 通知スケジュールチェックリクエストを受信");
+  if (data.type === "CHECK_NOTIFICATION_SCHEDULES") {
+    console.log(
+      "Service Worker: 通知スケジュールチェックリクエスト",
+      data.time
+    );
     checkScheduledNotifications();
+  }
+
+  if (data.type === "REGISTER_NOTIFICATION_SCHEDULE") {
+    console.log(
+      "Service Worker: 通知スケジュール登録リクエスト",
+      data.medicine
+    );
+    registerNotificationSchedule(data.medicine);
+  }
+
+  // 薬の削除処理を追加
+  if (data.type === "REMOVE_NOTIFICATION_SCHEDULE") {
+    console.log(
+      "Service Worker: 通知スケジュール削除リクエスト",
+      data.medicineId
+    );
+    removeNotificationSchedule(data.medicineId);
+  }
+
+  // すべての薬の削除処理を追加
+  if (data.type === "REMOVE_ALL_NOTIFICATION_SCHEDULES") {
+    console.log("Service Worker: すべての通知スケジュール削除リクエスト");
+    removeAllNotificationSchedules();
   }
 });
 
@@ -837,4 +742,78 @@ async function showNotificationForMedicine(schedule) {
     );
     return false;
   }
+}
+
+// 特定の薬の通知スケジュールを削除する関数
+function removeNotificationSchedule(medicineId) {
+  if (!medicineId) {
+    console.error("Service Worker: 削除対象の薬IDが指定されていません");
+    return;
+  }
+
+  // メモリ上のスケジュールから削除
+  const originalLength = notificationSchedules.length;
+  notificationSchedules = notificationSchedules.filter(
+    (schedule) => schedule.id !== medicineId
+  );
+
+  const removedCount = originalLength - notificationSchedules.length;
+  console.log(
+    `Service Worker: 薬ID ${medicineId} の通知スケジュールを ${removedCount} 件削除しました`
+  );
+
+  // IndexedDBに保存
+  saveSchedulesToIndexedDB();
+
+  // 最後の通知時間の記録も削除
+  if (lastNotificationTimes[medicineId]) {
+    delete lastNotificationTimes[medicineId];
+    console.log(
+      `Service Worker: 薬ID ${medicineId} の最終通知時間記録を削除しました`
+    );
+  }
+}
+
+// すべての通知スケジュールを削除する関数
+function removeAllNotificationSchedules() {
+  // メモリ上のスケジュールをクリア
+  const count = notificationSchedules.length;
+  notificationSchedules = [];
+  console.log(
+    `Service Worker: すべての通知スケジュール ${count} 件を削除しました`
+  );
+
+  // IndexedDBもクリア
+  if ("indexedDB" in self) {
+    const request = indexedDB.open("medicineReminderDB", 1);
+
+    request.onsuccess = function (event) {
+      const db = event.target.result;
+      const transaction = db.transaction(
+        ["notificationSchedules"],
+        "readwrite"
+      );
+      const store = transaction.objectStore("notificationSchedules");
+
+      const clearRequest = store.clear();
+
+      clearRequest.onsuccess = function () {
+        console.log(
+          "Service Worker: IndexedDBのすべての通知スケジュールを削除しました"
+        );
+      };
+
+      clearRequest.onerror = function (error) {
+        console.error("Service Worker: IndexedDBのクリアに失敗しました", error);
+      };
+    };
+
+    request.onerror = function (error) {
+      console.error("Service Worker: IndexedDB接続エラー", error);
+    };
+  }
+
+  // 最後の通知時間の記録もクリア
+  lastNotificationTimes = {};
+  console.log("Service Worker: すべての最終通知時間記録を削除しました");
 }
