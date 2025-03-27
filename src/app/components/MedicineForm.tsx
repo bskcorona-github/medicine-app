@@ -1,8 +1,10 @@
 "use client";
 
 import { useForm } from "react-hook-form";
+import { useEffect } from "react";
+import { Medicine } from "./MedicineList";
 
-type MedicineFormData = {
+export type MedicineFormData = {
   medicineName: string;
   time: string;
   daily: boolean;
@@ -10,22 +12,53 @@ type MedicineFormData = {
 
 type MedicineFormProps = {
   onAddMedicine: (data: MedicineFormData) => void;
+  onUpdateMedicine?: (id: string, data: MedicineFormData) => void;
+  editingMedicine: Medicine | null;
+  onCancelEdit?: () => void;
 };
 
-export default function MedicineForm({ onAddMedicine }: MedicineFormProps) {
+export default function MedicineForm({
+  onAddMedicine,
+  onUpdateMedicine,
+  editingMedicine,
+  onCancelEdit,
+}: MedicineFormProps) {
   const {
     register,
     handleSubmit,
     reset,
+    setValue,
     formState: { errors },
   } = useForm<MedicineFormData>({
     defaultValues: {
+      medicineName: "",
+      time: "",
       daily: true,
     },
   });
 
+  // 編集モードの場合、フォームに値をセット
+  useEffect(() => {
+    if (editingMedicine) {
+      setValue("medicineName", editingMedicine.name);
+      setValue("time", editingMedicine.time);
+      setValue("daily", editingMedicine.daily);
+    } else {
+      reset({
+        medicineName: "",
+        time: "",
+        daily: true,
+      });
+    }
+  }, [editingMedicine, setValue, reset]);
+
   const onSubmit = (data: MedicineFormData) => {
-    onAddMedicine(data);
+    if (editingMedicine && onUpdateMedicine) {
+      onUpdateMedicine(editingMedicine.id, data);
+    } else {
+      onAddMedicine(data);
+    }
+
     reset({
       medicineName: "",
       time: "",
@@ -35,7 +68,9 @@ export default function MedicineForm({ onAddMedicine }: MedicineFormProps) {
 
   return (
     <div className="w-full max-w-md mx-auto bg-white p-6 rounded-lg shadow-md">
-      <h2 className="text-xl font-bold mb-4">お薬を追加</h2>
+      <h2 className="text-xl font-bold mb-4">
+        {editingMedicine ? "お薬を編集" : "お薬を追加"}
+      </h2>
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
         <div>
           <label
@@ -90,12 +125,24 @@ export default function MedicineForm({ onAddMedicine }: MedicineFormProps) {
           </label>
         </div>
 
-        <button
-          type="submit"
-          className="w-full bg-blue-500 text-white py-2 px-4 rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
-        >
-          追加する
-        </button>
+        <div className="flex space-x-2">
+          <button
+            type="submit"
+            className="flex-1 bg-blue-500 text-white py-2 px-4 rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
+          >
+            {editingMedicine ? "更新する" : "追加する"}
+          </button>
+
+          {editingMedicine && onCancelEdit && (
+            <button
+              type="button"
+              onClick={onCancelEdit}
+              className="flex-1 bg-gray-300 text-gray-700 py-2 px-4 rounded-md hover:bg-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 transition-colors"
+            >
+              キャンセル
+            </button>
+          )}
+        </div>
       </form>
     </div>
   );

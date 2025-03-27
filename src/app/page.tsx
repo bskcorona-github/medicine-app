@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { v4 as uuidv4 } from "uuid";
-import MedicineForm from "./components/MedicineForm";
+import MedicineForm, { MedicineFormData } from "./components/MedicineForm";
 import MedicineList, { Medicine } from "./components/MedicineList";
 import Notification from "./components/Notification";
 import TimeDisplay from "./components/TimeDisplay";
@@ -12,6 +12,8 @@ export default function Home() {
   const [medicines, setMedicines] = useState<Medicine[]>([]);
   // 音声再生用ref
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // 編集中の薬
+  const [editingMedicine, setEditingMedicine] = useState<Medicine | null>(null);
 
   // ローカルストレージからデータを読み込む
   useEffect(() => {
@@ -37,11 +39,7 @@ export default function Home() {
   };
 
   // 新しい薬を追加
-  const handleAddMedicine = (data: {
-    medicineName: string;
-    time: string;
-    daily: boolean;
-  }) => {
+  const handleAddMedicine = (data: MedicineFormData) => {
     const newMedicine: Medicine = {
       id: uuidv4(),
       name: data.medicineName,
@@ -59,6 +57,50 @@ export default function Home() {
         medicine.id === id ? { ...medicine, taken: true } : medicine
       )
     );
+  };
+
+  // 薬を削除する
+  const handleDeleteMedicine = (id: string) => {
+    setMedicines(medicines.filter((medicine) => medicine.id !== id));
+  };
+
+  // すべての薬を削除する
+  const handleDeleteAllMedicines = () => {
+    if (window.confirm("すべてのお薬を削除してもよろしいですか？")) {
+      setMedicines([]);
+    }
+  };
+
+  // 薬の編集モードを開始
+  const handleEditMedicine = (medicine: Medicine) => {
+    setEditingMedicine(medicine);
+    // フォームが見えるようにスクロール
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+  };
+
+  // 薬を更新する
+  const handleUpdateMedicine = (id: string, data: MedicineFormData) => {
+    setMedicines(
+      medicines.map((medicine) =>
+        medicine.id === id
+          ? {
+              ...medicine,
+              name: data.medicineName,
+              time: data.time,
+              daily: data.daily,
+            }
+          : medicine
+      )
+    );
+    setEditingMedicine(null);
+  };
+
+  // 編集をキャンセル
+  const handleCancelEdit = () => {
+    setEditingMedicine(null);
   };
 
   // URLパラメータから通知アクションを処理
@@ -227,13 +269,21 @@ export default function Home() {
 
         <div className="grid gap-8 md:grid-cols-2">
           <div>
-            <MedicineForm onAddMedicine={handleAddMedicine} />
+            <MedicineForm
+              onAddMedicine={handleAddMedicine}
+              onUpdateMedicine={handleUpdateMedicine}
+              editingMedicine={editingMedicine}
+              onCancelEdit={handleCancelEdit}
+            />
           </div>
 
           <div>
             <MedicineList
               medicines={medicines}
               onTakeMedicine={handleTakeMedicine}
+              onDeleteMedicine={handleDeleteMedicine}
+              onEditMedicine={handleEditMedicine}
+              onDeleteAllMedicines={handleDeleteAllMedicines}
             />
           </div>
         </div>
