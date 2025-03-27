@@ -74,6 +74,9 @@ export default function Notification({
   // 音声再生中かどうかを追跡
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
 
+  // 最後の音声再生リクエスト時刻を追跡
+  const lastPlayRequestRef = useRef<number>(0);
+
   // 通知のデバウンス処理用
   const lastNotificationRef = useRef<{ time: number; id: string | null }>({
     time: 0,
@@ -116,140 +119,148 @@ export default function Notification({
       return;
     }
 
+    // オーディオの再生リクエスト時刻を追跡
+    const now = Date.now();
+    const AUDIO_DEBOUNCE_MS = 2000; // 2秒間のデバウンス
+
+    // 最後の再生リクエストから短時間の場合はスキップ
+    if (now - lastPlayRequestRef.current < AUDIO_DEBOUNCE_MS) {
+      console.log(
+        `最後の再生リクエストから${
+          (now - lastPlayRequestRef.current) / 1000
+        }秒しか経過していないため、再生をスキップします`
+      );
+      return;
+    }
+
+    // 最後の再生リクエスト時刻を更新
+    lastPlayRequestRef.current = now;
+
     try {
       if (audioRef.current) {
-        setIsPlaying(true);
-
-        // 現在時刻を使ってキャッシュバスティング
-        const timestamp = new Date().getTime();
-
-        // 新しいAudio要素を作成（メモリリークを防ぐため、使い捨てにする）
-        const tempAudio = new Audio(
-          `/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav?t=${timestamp}`
-        );
-
-        // 音量設定
-        tempAudio.volume = 1.0;
-
-        // モバイルでの自動再生制限に対応するためユーザーインタラクションを模倣
-        interface WebkitWindow extends Window {
-          webkitAudioContext: typeof AudioContext;
-        }
-
-        const AudioContextClass =
-          window.AudioContext || (window as WebkitWindow).webkitAudioContext;
-        if (AudioContextClass) {
-          const context = new AudioContextClass();
-          context
-            .resume()
-            .catch((err) => console.log("AudioContext resume error:", err));
-        }
-
-        // プリロードして準備
-        tempAudio.preload = "auto";
-
-        // 読み込み開始イベント
-        tempAudio.addEventListener("loadstart", () => {
-          console.log("音声ファイルの読み込みを開始しました");
-        });
-
-        // エラーハンドリングを強化
-        tempAudio.addEventListener("error", (e) => {
-          console.error("音声読み込みエラー:", e);
-          setIsPlaying(false);
-
-          // 代替方法を試す - fetch APIでファイルの存在確認
-          fetch(
-            `/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav?t=${timestamp}`
-          )
-            .then((response) => {
-              if (response.ok) {
-                console.log(
-                  "音声ファイルは存在していますが、再生できません。代替方法を試みます"
-                );
-
-                // 新しいAudio要素で再試行
-                const alternativeAudio = new Audio();
-                alternativeAudio.src = `/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav?t=${timestamp}`;
-                alternativeAudio.volume = 1.0;
-                alternativeAudio.play().catch((err) => {
-                  console.warn("代替方法でも音声再生に失敗:", err);
-                  setIsPlaying(false); // 再生に失敗した場合も状態をリセット
-                });
-
-                // 再生完了時の処理を追加
-                alternativeAudio.addEventListener("ended", () => {
-                  console.log("代替方法の音声再生が完了しました");
-                  setIsPlaying(false);
-                  // メモリリークを防ぐため明示的に解放
-                  alternativeAudio.src = "";
-                  alternativeAudio.remove();
-                });
-              } else {
-                console.error("音声ファイルが見つかりません:", response.status);
-                setIsPlaying(false);
-              }
-            })
-            .catch((err) => {
-              console.error("音声ファイルの確認に失敗:", err);
-              setIsPlaying(false);
-            });
-        });
-
-        // 再生完了時の処理
-        tempAudio.addEventListener("ended", () => {
-          console.log("音声再生が完了しました");
-          setIsPlaying(false);
-          // メモリリークを防ぐため明示的に解放
-          tempAudio.src = "";
-          tempAudio.remove();
-        });
-
-        // 安全に再生するためタイムアウト設定
-        const playPromise = tempAudio.play();
-
-        if (playPromise !== undefined) {
-          playPromise
-            .then(() => {
-              console.log("音声再生を開始しました");
-            })
-            .catch((error) => {
-              console.error("音声再生に失敗しました:", error);
-              setIsPlaying(false);
-
-              // もう一度試す（モバイルブラウザでは最初のユーザーインタラクションが必要）
-              setTimeout(() => {
-                if (isPlaying) {
-                  console.log(
-                    "再試行をスキップします（既に別の再生処理が進行中）"
-                  );
-                  return;
-                }
-
-                setIsPlaying(true);
-                const retryAudio = new Audio(
-                  "/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav"
-                );
-                retryAudio.volume = 1.0;
-
-                // 再生終了時のイベントリスナーを追加
-                retryAudio.addEventListener("ended", () => {
-                  console.log("再試行音声の再生が完了しました");
-                  setIsPlaying(false);
-                  retryAudio.src = "";
-                  retryAudio.remove();
-                });
-
-                retryAudio.play().catch(() => {
-                  // エラーは無視（ログが大量に出るのを防ぐ）
-                  setIsPlaying(false);
-                });
-              }, 500);
-            });
+        // 以前の再生が終了していない場合は停止
+        if (!audioRef.current.paused) {
+          audioRef.current.pause();
+          audioRef.current.currentTime = 0;
         }
       }
+
+      setIsPlaying(true);
+
+      // 現在時刻を使ってキャッシュバスティング
+      const timestamp = new Date().getTime();
+
+      // 新しいAudio要素を作成（メモリリークを防ぐため、使い捨てにする）
+      const tempAudio = new Audio(
+        `/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav?t=${timestamp}`
+      );
+
+      // 既存のオーディオがあれば解放
+      if (audioRef.current) {
+        audioRef.current.src = "";
+        audioRef.current.load();
+      }
+
+      // 新しいオーディオをrefに設定
+      audioRef.current = tempAudio;
+
+      // 音量設定
+      tempAudio.volume = 1.0;
+
+      // モバイルでの自動再生制限に対応するためユーザーインタラクションを模倣
+      interface WebkitWindow extends Window {
+        webkitAudioContext: typeof AudioContext;
+      }
+
+      const AudioContextClass =
+        window.AudioContext || (window as WebkitWindow).webkitAudioContext;
+      if (AudioContextClass) {
+        const context = new AudioContextClass();
+        context
+          .resume()
+          .catch((err) => console.log("AudioContext resume error:", err));
+      }
+
+      // プリロードして準備
+      tempAudio.preload = "auto";
+
+      // 読み込み開始イベント
+      tempAudio.addEventListener("loadstart", () => {
+        console.log("音声ファイルの読み込みを開始しました");
+      });
+
+      // エラーハンドリングを強化
+      tempAudio.addEventListener("error", (e) => {
+        console.error("音声読み込みエラー:", e);
+        setIsPlaying(false);
+
+        // 代替方法を試す - fetch APIでファイルの存在確認
+        fetch(
+          `/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav?t=${timestamp}`
+        )
+          .then((response) => {
+            if (response.ok) {
+              console.log(
+                "音声ファイルは存在していますが、再生できません。代替方法を試みます"
+              );
+
+              // 新しいAudio要素で再試行
+              const alternativeAudio = new Audio();
+              alternativeAudio.src = `/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav?t=${timestamp}`;
+              alternativeAudio.volume = 1.0;
+              alternativeAudio.play().catch((err) => {
+                console.warn("代替方法でも音声再生に失敗:", err);
+                setIsPlaying(false); // 再生に失敗した場合も状態をリセット
+              });
+
+              // 再生完了時の処理を追加
+              alternativeAudio.addEventListener("ended", () => {
+                console.log("代替方法の音声再生が完了しました");
+                setIsPlaying(false);
+                // メモリリークを防ぐため明示的に解放
+                alternativeAudio.src = "";
+                alternativeAudio.remove();
+              });
+            } else {
+              console.error("音声ファイルが見つかりません:", response.status);
+              setIsPlaying(false);
+            }
+          })
+          .catch((err) => {
+            console.error("音声ファイルの確認に失敗:", err);
+            setIsPlaying(false);
+          });
+      });
+
+      // 再生完了時の処理
+      tempAudio.addEventListener("ended", () => {
+        console.log("音声再生が完了しました");
+        setIsPlaying(false);
+
+        // メモリリークを防ぐため明示的に解放
+        tempAudio.src = "";
+      });
+
+      // 音声を再生
+      tempAudio
+        .play()
+        .then(() => {
+          console.log("音声の再生を開始しました");
+        })
+        .catch((err) => {
+          console.warn("音声再生に失敗:", err);
+          setIsPlaying(false);
+        });
+
+      // 再生状態の監視
+      const checkPlayingStatus = setInterval(() => {
+        if (tempAudio.ended || tempAudio.paused) {
+          clearInterval(checkPlayingStatus);
+          setIsPlaying(false);
+        }
+      }, 1000);
     } catch (error) {
-      console.error("音声再生中にエラーが発生しました:", error);
+      console.error("音声再生処理中にエラーが発生しました:", error);
       setIsPlaying(false);
     }
   }, [isPlaying]);
@@ -626,109 +637,6 @@ export default function Notification({
             ).toLocaleString()}）にスケジュール`
           );
 
-          // ローカルストレージに通知予定を保存（アプリが閉じても通知されるため）
-          try {
-            const schedulesJson =
-              localStorage.getItem("notificationSchedules") || "[]";
-            let schedules = JSON.parse(schedulesJson) as ScheduleType[];
-
-            // 重複データの削除（同じID、同じ時間のスケジュールは最新のもののみ残す）
-            const uniqueSchedules: ScheduleType[] = [];
-            const seen = new Set();
-
-            schedules.forEach((schedule: ScheduleType) => {
-              const key = `${schedule.id}-${schedule.time}`;
-              if (!seen.has(key)) {
-                seen.add(key);
-                uniqueSchedules.push(schedule);
-              }
-            });
-
-            // クリーニングした結果を再保存
-            if (schedules.length !== uniqueSchedules.length) {
-              localStorage.setItem(
-                "notificationSchedules",
-                JSON.stringify(uniqueSchedules)
-              );
-              console.log(
-                `重複スケジュールを${
-                  schedules.length - uniqueSchedules.length
-                }件削除しました`
-              );
-              schedules = uniqueSchedules;
-            }
-
-            if (schedules.length > 0) {
-              console.log(
-                `保存された${schedules.length}件の通知スケジュールを読み込みました`
-              );
-
-              // ページが開かれた時点で未来の通知のみを再スケジュール
-              const now = new Date().getTime();
-
-              // 表示頻度を抑えるため、前回処理したスケジュールを記録
-              const processedSchedules = new Set();
-
-              schedules.forEach((schedule: ScheduleType) => {
-                // 次の通知時刻が過去の場合は、新しい通知時刻を計算
-                if (schedule.nextNotification < now) {
-                  // 時刻を解析
-                  const [hours, minutes] = schedule.time.split(":").map(Number);
-                  const nextDate = new Date();
-                  nextDate.setHours(hours, minutes, 0, 0);
-
-                  // 今日の指定時刻がすでに過ぎている場合は明日にスケジュール
-                  if (nextDate.getTime() < now) {
-                    nextDate.setDate(nextDate.getDate() + 1);
-                  }
-
-                  schedule.nextNotification = nextDate.getTime();
-                }
-
-                // 通知時刻までの待機時間
-                const waitTime = schedule.nextNotification - now;
-
-                // キーを作成して重複通知を防止
-                const scheduleKey = `${schedule.id}-${schedule.time}`;
-
-                // このスケジュールがまだ処理されていない場合のみ処理
-                if (!processedSchedules.has(scheduleKey)) {
-                  processedSchedules.add(scheduleKey);
-
-                  // 薬の情報から通知を再スケジュール
-                  console.log(
-                    `保存されたスケジュールから ${schedule.name} の通知を ${waitTime}ms 後に再設定します`
-                  );
-
-                  // 同じ薬に対する通知が多数発生しないように制限を設ける
-                  if (waitTime > 0 && waitTime < 24 * 60 * 60 * 1000) {
-                    setTimeout(() => {
-                      // 該当する薬を現在のリストから探す
-                      const medicine = medicines.find(
-                        (m) => m.id === schedule.id
-                      );
-                      if (medicine && !medicine.taken) {
-                        // 見つかった場合は通知を表示
-                        console.log(
-                          `保存されたスケジュールから ${schedule.name} の通知時間になりました`
-                        );
-                        showNotificationAlert(medicine);
-                      }
-                    }, waitTime);
-                  }
-                }
-              });
-
-              // クリーニング後のスケジュールを保存
-              localStorage.setItem(
-                "notificationSchedules",
-                JSON.stringify(schedules)
-              );
-            }
-          } catch (error) {
-            console.error("保存された通知スケジュールの読み込みに失敗:", error);
-          }
-
           // ServiceWorkerに長期通知をスケジュール
           try {
             await navigator.serviceWorker.ready;
@@ -841,107 +749,6 @@ export default function Notification({
         // ServiceWorkerの登録後にバックグラウンド同期を設定
         requestBackgroundSync();
       });
-
-      // ローカルストレージから通知スケジュールを読み込み
-      try {
-        const schedulesJson =
-          localStorage.getItem("notificationSchedules") || "[]";
-        let schedules = JSON.parse(schedulesJson) as ScheduleType[];
-
-        // 重複データの削除（同じID、同じ時間のスケジュールは最新のもののみ残す）
-        const uniqueSchedules: ScheduleType[] = [];
-        const seen = new Set();
-
-        schedules.forEach((schedule: ScheduleType) => {
-          const key = `${schedule.id}-${schedule.time}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            uniqueSchedules.push(schedule);
-          }
-        });
-
-        // クリーニングした結果を再保存
-        if (schedules.length !== uniqueSchedules.length) {
-          localStorage.setItem(
-            "notificationSchedules",
-            JSON.stringify(uniqueSchedules)
-          );
-          console.log(
-            `重複スケジュールを${
-              schedules.length - uniqueSchedules.length
-            }件削除しました`
-          );
-          schedules = uniqueSchedules;
-        }
-
-        if (schedules.length > 0) {
-          console.log(
-            `保存された${schedules.length}件の通知スケジュールを読み込みました`
-          );
-
-          // ページが開かれた時点で未来の通知のみを再スケジュール
-          const now = new Date().getTime();
-
-          // 表示頻度を抑えるため、前回処理したスケジュールを記録
-          const processedSchedules = new Set();
-
-          schedules.forEach((schedule: ScheduleType) => {
-            // 次の通知時刻が過去の場合は、新しい通知時刻を計算
-            if (schedule.nextNotification < now) {
-              // 時刻を解析
-              const [hours, minutes] = schedule.time.split(":").map(Number);
-              const nextDate = new Date();
-              nextDate.setHours(hours, minutes, 0, 0);
-
-              // 今日の指定時刻がすでに過ぎている場合は明日にスケジュール
-              if (nextDate.getTime() < now) {
-                nextDate.setDate(nextDate.getDate() + 1);
-              }
-
-              schedule.nextNotification = nextDate.getTime();
-            }
-
-            // 通知時刻までの待機時間
-            const waitTime = schedule.nextNotification - now;
-
-            // キーを作成して重複通知を防止
-            const scheduleKey = `${schedule.id}-${schedule.time}`;
-
-            // このスケジュールがまだ処理されていない場合のみ処理
-            if (!processedSchedules.has(scheduleKey)) {
-              processedSchedules.add(scheduleKey);
-
-              // 薬の情報から通知を再スケジュール
-              console.log(
-                `保存されたスケジュールから ${schedule.name} の通知を ${waitTime}ms 後に再設定します`
-              );
-
-              // 同じ薬に対する通知が多数発生しないように制限を設ける
-              if (waitTime > 0 && waitTime < 24 * 60 * 60 * 1000) {
-                setTimeout(() => {
-                  // 該当する薬を現在のリストから探す
-                  const medicine = medicines.find((m) => m.id === schedule.id);
-                  if (medicine && !medicine.taken) {
-                    // 見つかった場合は通知を表示
-                    console.log(
-                      `保存されたスケジュールから ${schedule.name} の通知時間になりました`
-                    );
-                    showNotificationAlert(medicine);
-                  }
-                }, waitTime);
-              }
-            }
-          });
-
-          // クリーニング後のスケジュールを保存
-          localStorage.setItem(
-            "notificationSchedules",
-            JSON.stringify(schedules)
-          );
-        }
-      } catch (error) {
-        console.error("保存された通知スケジュールの読み込みに失敗:", error);
-      }
     } else {
       const timeSinceLastInit = (now - lastInitTime) / 1000;
       console.log(
@@ -967,12 +774,110 @@ export default function Notification({
       }
       clearInterval(wakeInterval);
     };
-  }, [
-    registerServiceWorker,
-    medicines,
-    showNotificationAlert,
-    requestBackgroundSync,
-  ]);
+  }, [registerServiceWorker, requestBackgroundSync]);
+
+  // ローカルストレージから通知スケジュールを読み込むuseEffect
+  useEffect(() => {
+    try {
+      const schedulesJson =
+        localStorage.getItem("notificationSchedules") || "[]";
+      let schedules = JSON.parse(schedulesJson) as ScheduleType[];
+
+      // 重複データの削除（同じID、同じ時間のスケジュールは最新のもののみ残す）
+      const uniqueSchedules: ScheduleType[] = [];
+      const seen = new Set();
+
+      schedules.forEach((schedule: ScheduleType) => {
+        const key = `${schedule.id}-${schedule.time}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          uniqueSchedules.push(schedule);
+        }
+      });
+
+      // クリーニングした結果を再保存
+      if (schedules.length !== uniqueSchedules.length) {
+        localStorage.setItem(
+          "notificationSchedules",
+          JSON.stringify(uniqueSchedules)
+        );
+        console.log(
+          `重複スケジュールを${
+            schedules.length - uniqueSchedules.length
+          }件削除しました`
+        );
+        schedules = uniqueSchedules;
+      }
+
+      if (schedules.length > 0) {
+        console.log(
+          `保存された${schedules.length}件の通知スケジュールを読み込みました`
+        );
+
+        // ページが開かれた時点で未来の通知のみを再スケジュール
+        const now = new Date().getTime();
+
+        // 表示頻度を抑えるため、前回処理したスケジュールを記録
+        const processedSchedules = new Set();
+
+        schedules.forEach((schedule: ScheduleType) => {
+          // 次の通知時刻が過去の場合は、新しい通知時刻を計算
+          if (schedule.nextNotification < now) {
+            // 時刻を解析
+            const [hours, minutes] = schedule.time.split(":").map(Number);
+            const nextDate = new Date();
+            nextDate.setHours(hours, minutes, 0, 0);
+
+            // 今日の指定時刻がすでに過ぎている場合は明日にスケジュール
+            if (nextDate.getTime() < now) {
+              nextDate.setDate(nextDate.getDate() + 1);
+            }
+
+            schedule.nextNotification = nextDate.getTime();
+          }
+
+          // 通知時刻までの待機時間
+          const waitTime = schedule.nextNotification - now;
+
+          // キーを作成して重複通知を防止
+          const scheduleKey = `${schedule.id}-${schedule.time}`;
+
+          // このスケジュールがまだ処理されていない場合のみ処理
+          if (!processedSchedules.has(scheduleKey)) {
+            processedSchedules.add(scheduleKey);
+
+            // 薬の情報から通知を再スケジュール
+            console.log(
+              `保存されたスケジュールから ${schedule.name} の通知を ${waitTime}ms 後に再設定します`
+            );
+
+            // 同じ薬に対する通知が多数発生しないように制限を設ける
+            if (waitTime > 0 && waitTime < 24 * 60 * 60 * 1000) {
+              setTimeout(() => {
+                // 該当する薬を現在のリストから探す
+                const medicine = medicines.find((m) => m.id === schedule.id);
+                if (medicine && !medicine.taken) {
+                  // 見つかった場合は通知を表示
+                  console.log(
+                    `保存されたスケジュールから ${schedule.name} の通知時間になりました`
+                  );
+                  showNotificationAlert(medicine);
+                }
+              }, waitTime);
+            }
+          }
+        });
+
+        // クリーニング後のスケジュールを保存
+        localStorage.setItem(
+          "notificationSchedules",
+          JSON.stringify(schedules)
+        );
+      }
+    } catch (error) {
+      console.error("保存された通知スケジュールの読み込みに失敗:", error);
+    }
+  }, [medicines, showNotificationAlert]);
 
   // 1分ごとに薬の時間をチェック
   useEffect(() => {

@@ -18,12 +18,25 @@ let notificationSchedules = [];
 // 最後の通知時間を記録するオブジェクト
 let lastNotificationTimes = {};
 
+// グローバル通知デバウンス管理（タイプごとに管理）
+let lastGlobalNotifications = {
+  sound: 0, // 音声再生
+  notification: 0, // システム通知
+  message: 0, // クライアントへのメッセージ送信
+};
+
 // favicon.icoのキャッシュ状態を追跡
 let faviconCached = false;
 
 // 音声ファイルのパス
 const SOUND_FILE_PATH =
   "/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav";
+
+// グローバルな通知デバウンス値
+const NOTIFICATION_DEBOUNCE_MS = 5000; // 5秒 - グローバル通知間隔
+const SOUND_DEBOUNCE_MS = 3000; // 3秒 - 音声再生間隔
+const MESSAGE_DEBOUNCE_MS = 2000; // 2秒 - メッセージ送信間隔
+const NOTIFICATION_MIN_INTERVAL = 3000; // 3秒 - 同一薬の通知間隔
 
 // インストール時に実行
 self.addEventListener("install", (event) => {
@@ -558,10 +571,8 @@ async function checkScheduledNotifications() {
   let updatedSchedules = false;
   let notificationShown = false;
 
-  // 同時に複数の通知が表示される問題を防止するためのデバウンス実装
-  // 最後の通知から5秒以内に再通知しないようにする
-  const NOTIFICATION_DEBOUNCE_MS = 5000; // 5秒
-  const lastGlobalNotification = self._lastGlobalNotificationTime || 0;
+  // 同時に複数の通知が表示される問題を防止するためのデバウンス
+  const lastGlobalNotification = lastGlobalNotifications.notification || 0;
   const shouldDebounceGlobal =
     now - lastGlobalNotification < NOTIFICATION_DEBOUNCE_MS;
 
@@ -591,7 +602,7 @@ async function checkScheduledNotifications() {
 
         // 最後の通知時間を更新（グローバルとこの薬の両方）
         lastNotificationTimes[medicineId] = now;
-        self._lastGlobalNotificationTime = now;
+        lastGlobalNotifications.notification = now;
         notificationShown = true;
 
         try {
@@ -623,10 +634,7 @@ async function checkScheduledNotifications() {
             return;
           }
 
-          // メッセージ送信時間の記録用オブジェクトを初期化
-          if (!self._lastMessageTimes) {
-            self._lastMessageTimes = {};
-          }
+          // 最新の送信時間を記録
           self._lastMessageTimes[messageKey] = now;
 
           // クライアントにメッセージを送信
@@ -734,7 +742,6 @@ async function showNotificationForMedicine(schedule) {
   // 重複通知防止のため、最後の通知時間をチェック
   const now = Date.now();
   const lastNotificationTime = lastNotificationTimes[schedule.id] || 0;
-  const NOTIFICATION_MIN_INTERVAL = 3000; // 3秒以内の同一通知を防止
 
   if (now - lastNotificationTime < NOTIFICATION_MIN_INTERVAL) {
     console.log(
@@ -744,6 +751,21 @@ async function showNotificationForMedicine(schedule) {
     );
     return false;
   }
+
+  // グローバル通知時間もチェック
+  const lastGlobalNotification = lastGlobalNotifications.notification || 0;
+  if (now - lastGlobalNotification < NOTIFICATION_DEBOUNCE_MS) {
+    console.log(
+      `Service Worker: 最後の通知から${
+        (now - lastGlobalNotification) / 1000
+      }秒しか経過していないため、通知をスキップします`
+    );
+    return false;
+  }
+
+  // 最後の通知時間を更新
+  lastNotificationTimes[schedule.id] = now;
+  lastGlobalNotifications.notification = now;
 
   try {
     // 通知を表示
@@ -783,7 +805,6 @@ async function showNotificationForMedicine(schedule) {
     });
 
     // メッセージ送信の重複防止
-    const DEBOUNCE_TIME = 2000; // 2秒以内のメッセージは重複して送らない
     const messageKey = `playSound-${schedule.id}`;
 
     // メッセージ送信時間の記録用オブジェクトを初期化
@@ -792,7 +813,7 @@ async function showNotificationForMedicine(schedule) {
     }
 
     const lastMessageTime = self._lastMessageTimes[messageKey] || 0;
-    if (now - lastMessageTime < DEBOUNCE_TIME) {
+    if (now - lastMessageTime < MESSAGE_DEBOUNCE_MS) {
       console.log(
         `Service Worker: ${schedule.name}の通知音メッセージは最近送信済み(${
           (now - lastMessageTime) / 1000
@@ -801,8 +822,21 @@ async function showNotificationForMedicine(schedule) {
       return true;
     }
 
+    // 最後の音声通知時間もチェック
+    const lastSoundTime = lastGlobalNotifications.sound || 0;
+    if (now - lastSoundTime < SOUND_DEBOUNCE_MS) {
+      console.log(
+        `Service Worker: 最後の音声通知から${
+          (now - lastSoundTime) / 1000
+        }秒しか経過していないため、通知音をスキップします`
+      );
+      return true;
+    }
+
     // 最新の送信時間を記録
     self._lastMessageTimes[messageKey] = now;
+    lastGlobalNotifications.sound = now;
+    lastGlobalNotifications.message = now;
 
     // クライアントが存在しない場合（アプリが閉じている場合）
     if (clients.length === 0) {
@@ -832,221 +866,9 @@ async function showNotificationForMedicine(schedule) {
         `Service Worker: ${schedule.name}の通知音メッセージを送信しました (クライアント: ${client.id})`
       );
     }
-
-    return true;
   } catch (error) {
-    console.error(
-      `Service Worker: ${schedule.name}の通知表示に失敗しました`,
-      error
-    );
-    return false;
-  }
-}
-
-// 通知を表示する関数
-async function showNotification(medicine) {
-  // 重複通知防止のため、最後の通知時間をチェック
-  const now = Date.now();
-  const lastNotificationTime = lastNotificationTimes[medicine.id] || 0;
-  const NOTIFICATION_MIN_INTERVAL = 3000; // 3秒以内の同一通知を防止
-
-  if (now - lastNotificationTime < NOTIFICATION_MIN_INTERVAL) {
-    console.log(
-      `Service Worker: ${medicine.name}の通知は最近送信されたため(${
-        (now - lastNotificationTime) / 1000
-      }秒前)、重複を防止します`
-    );
-    return;
+    console.error(`Service Worker: 通知の表示に失敗しました: ${error}`);
   }
 
-  // 最後の通知時間を更新
-  lastNotificationTimes[medicine.id] = now;
-
-  try {
-    // 通知を表示
-    await self.registration.showNotification("お薬の時間です", {
-      body: `${medicine.name}を服用する時間です`,
-      icon: "/icon/favicon.ico",
-      badge: "/icon/favicon.ico",
-      tag: medicine.tag || `medicine-${medicine.id}`,
-      requireInteraction: true, // ユーザーがアクションを起こすまで通知を表示
-      actions: [
-        {
-          action: "taken",
-          title: "服用しました",
-          icon: "/icon/check.png",
-        },
-        {
-          action: "later",
-          title: "あとで",
-          icon: "/icon/later.png",
-        },
-      ],
-      data: {
-        medicineId: medicine.id,
-        url: `/?action=taken&id=${medicine.id}`,
-        dateOfArrival: Date.now(),
-      },
-    });
-
-    console.log(`Service Worker: ${medicine.name}の通知を表示しました`);
-
-    // メッセージ送信の重複防止
-    const DEBOUNCE_TIME = 2000; // 2秒以内のメッセージは重複して送らない
-    const messageKey = `playSound-${medicine.id}`;
-
-    // メッセージ送信時間の記録用オブジェクトを初期化
-    if (!self._lastMessageTimes) {
-      self._lastMessageTimes = {};
-    }
-
-    const lastMessageTime = self._lastMessageTimes[messageKey] || 0;
-    if (now - lastMessageTime < DEBOUNCE_TIME) {
-      console.log(
-        `Service Worker: ${medicine.name}の通知音メッセージは最近送信済み(${
-          (now - lastMessageTime) / 1000
-        }秒前)です`
-      );
-      return;
-    }
-
-    // 最新の送信時間を記録
-    self._lastMessageTimes[messageKey] = now;
-
-    // クライアントにメッセージを送信
-    const allClients = await clients.matchAll({ includeUncontrolled: true });
-
-    if (allClients.length > 0) {
-      // クライアントが存在する場合は最初の1つだけにメッセージを送信
-      const client = allClients[0];
-      client.postMessage({
-        type: "PLAY_NOTIFICATION_SOUND",
-        medicineId: medicine.id,
-        time: now,
-      });
-      console.log(
-        `Service Worker: ${medicine.name}の通知音メッセージを送信しました (クライアント: ${client.id})`
-      );
-    } else {
-      console.log("Service Worker: アクティブなクライアントが見つかりません");
-    }
-  } catch (error) {
-    console.error("Service Worker: 通知表示エラー", error);
-  }
-}
-
-// 通知スケジュールを登録する関数
-function registerNotificationSchedule(medicine) {
-  try {
-    // 新しいスケジュールの追加
-    const newSchedule = {
-      id: medicine.id,
-      name: medicine.name,
-      time: medicine.time,
-      nextNotification: medicine.nextNotification,
-      daily: medicine.daily || false,
-    };
-
-    // 既存のスケジュールを探す（同じID、同じ時間のもの）
-    const existingIndex = notificationSchedules.findIndex(
-      (schedule) =>
-        schedule.id === medicine.id && schedule.time === medicine.time
-    );
-
-    if (existingIndex >= 0) {
-      // 既存のスケジュールを更新
-      notificationSchedules[existingIndex] = newSchedule;
-      console.log(
-        `Service Worker: 既存のスケジュールを更新しました: ${medicine.name}`
-      );
-    } else {
-      // 新しいスケジュールを追加
-      notificationSchedules.push(newSchedule);
-      console.log(
-        `Service Worker: 新しいスケジュールを追加しました: ${medicine.name}`
-      );
-    }
-
-    // IndexedDBに保存
-    saveSchedulesToIndexedDB();
-
-    // 即座にスケジュールをチェック
-    checkScheduledNotifications();
-  } catch (error) {
-    console.error("Service Worker: スケジュール登録エラー", error);
-  }
-}
-
-// 特定の薬の通知スケジュールを削除する関数
-function removeNotificationSchedule(medicineId) {
-  if (!medicineId) {
-    console.error("Service Worker: 削除対象の薬IDが指定されていません");
-    return;
-  }
-
-  // メモリ上のスケジュールから削除
-  const originalLength = notificationSchedules.length;
-  notificationSchedules = notificationSchedules.filter(
-    (schedule) => schedule.id !== medicineId
-  );
-
-  const removedCount = originalLength - notificationSchedules.length;
-  console.log(
-    `Service Worker: 薬ID ${medicineId} の通知スケジュールを ${removedCount} 件削除しました`
-  );
-
-  // IndexedDBに保存
-  saveSchedulesToIndexedDB();
-
-  // 最後の通知時間の記録も削除
-  if (lastNotificationTimes[medicineId]) {
-    delete lastNotificationTimes[medicineId];
-    console.log(
-      `Service Worker: 薬ID ${medicineId} の最終通知時間記録を削除しました`
-    );
-  }
-}
-
-// すべての通知スケジュールを削除する関数
-function removeAllNotificationSchedules() {
-  // メモリ上のスケジュールをクリア
-  const count = notificationSchedules.length;
-  notificationSchedules = [];
-  console.log(
-    `Service Worker: すべての通知スケジュール ${count} 件を削除しました`
-  );
-
-  // IndexedDBもクリア
-  if ("indexedDB" in self) {
-    const request = indexedDB.open("medicineReminderDB", 1);
-
-    request.onsuccess = function (event) {
-      const db = event.target.result;
-      const transaction = db.transaction(
-        ["notificationSchedules"],
-        "readwrite"
-      );
-      const store = transaction.objectStore("notificationSchedules");
-
-      const clearRequest = store.clear();
-
-      clearRequest.onsuccess = function () {
-        console.log(
-          "Service Worker: IndexedDBのすべての通知スケジュールを削除しました"
-        );
-      };
-
-      clearRequest.onerror = function (error) {
-        console.error("Service Worker: IndexedDBのクリアに失敗しました", error);
-      };
-    };
-
-    request.onerror = function (error) {
-      console.error("Service Worker: IndexedDB接続エラー", error);
-    };
-  }
-
-  // 最後の通知時間の記録もクリア
-  lastNotificationTimes = {};
-  console.log("Service Worker: すべての最終通知時間記録を削除しました");
+  return false;
 }
