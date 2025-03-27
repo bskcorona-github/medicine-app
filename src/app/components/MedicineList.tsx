@@ -21,7 +21,7 @@ export default function MedicineList({
     <div className="w-full max-w-md mx-auto mt-8">
       <h2 className="text-xl font-bold mb-4">お薬リスト</h2>
       {medicines.length === 0 ? (
-        <p className="text-gray-500 text-center">薬が登録されていません</p>
+        <p className="text-black text-center">薬が登録されていません</p>
       ) : (
         <ul className="space-y-3">
           {medicines.map((medicine) => (
@@ -33,8 +33,11 @@ export default function MedicineList({
             >
               <div className="flex justify-between items-center">
                 <div>
-                  <h3 className="font-medium">{medicine.name}</h3>
-                  <p className="text-sm text-gray-500">{medicine.time}</p>
+                  <h3 className="font-medium text-black">{medicine.name}</h3>
+                  <p className="text-sm text-black">
+                    {medicine.time}
+                    {medicine.daily && " (毎日)"}
+                  </p>
                 </div>
                 {medicine.taken ? (
                   <span className="px-3 py-1 text-sm text-green-800 bg-green-100 rounded-full">

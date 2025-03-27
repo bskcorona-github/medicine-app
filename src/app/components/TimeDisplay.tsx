@@ -34,8 +34,8 @@ export default function TimeDisplay() {
 
   return (
     <div className="text-center mb-6">
-      <p className="text-xl font-bold">{currentDate}</p>
-      <p className="text-4xl font-mono">{currentTime}</p>
+      <p className="text-xl font-bold text-black">{currentDate}</p>
+      <p className="text-4xl font-mono text-black">{currentTime}</p>
     </div>
   );
 }

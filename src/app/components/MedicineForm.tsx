@@ -40,7 +40,7 @@ export default function MedicineForm({ onAddMedicine }: MedicineFormProps) {
         <div>
           <label
             htmlFor="medicineName"
-            className="block text-sm font-medium text-gray-700 mb-1"
+            className="block text-sm font-medium text-black mb-1"
           >
             お薬の名前
           </label>
@@ -63,7 +63,7 @@ export default function MedicineForm({ onAddMedicine }: MedicineFormProps) {
         <div>
           <label
             htmlFor="time"
-            className="block text-sm font-medium text-gray-700 mb-1"
+            className="block text-sm font-medium text-black mb-1"
           >
             飲む時間
           </label>
@@ -85,7 +85,7 @@ export default function MedicineForm({ onAddMedicine }: MedicineFormProps) {
             {...register("daily")}
             className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
           />
-          <label htmlFor="daily" className="ml-2 block text-sm text-gray-700">
+          <label htmlFor="daily" className="ml-2 block text-sm text-black">
             毎日服用（ONにすると毎日同じ時間に通知されます）
           </label>
         </div>

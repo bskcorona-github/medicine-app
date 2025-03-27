@@ -300,8 +300,10 @@ export default function Notification({
       {/* 通知ダイアログ */}
       <div className="fixed bottom-4 right-4 bg-white p-4 rounded-lg shadow-lg max-w-sm z-50">
         <div className="flex flex-col">
-          <h3 className="font-bold text-lg">お薬の時間です</h3>
-          <p className="mb-2">{notificationMedicine.name}を服用してください</p>
+          <h3 className="font-bold text-lg text-black">お薬の時間です</h3>
+          <p className="mb-2 text-black">
+            {notificationMedicine.name}を服用してください
+          </p>
           <div className="flex justify-end space-x-2">
             <button
               onClick={() => {
@@ -314,7 +316,7 @@ export default function Notification({
             </button>
             <button
               onClick={() => setShowNotification(false)}
-              className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300"
+              className="px-4 py-2 bg-gray-200 text-black rounded-md hover:bg-gray-300"
             >
               後で
             </button>

@@ -33,6 +33,27 @@ select {
   font-weight: 500;
 }
 
+/* テキスト要素のデフォルト色 */
+p,
+span,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+label,
+div {
+  color: black;
+}
+
+/* 薄いグレーを使っている場所を上書き */
+.text-gray-500,
+.text-gray-600,
+.text-gray-700 {
+  color: black !important;
+}
+
 /* プレースホルダーのスタイル */
 ::placeholder {
   color: #9ca3af !important;
