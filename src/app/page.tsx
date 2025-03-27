@@ -31,6 +31,16 @@ export default function Home() {
   // 通知音を再生する関数
   const playNotificationSound = useCallback(() => {
     if (audioRef.current) {
+      // 既に再生中かどうかをチェック
+      if (
+        audioRef.current.currentTime > 0 &&
+        !audioRef.current.paused &&
+        !audioRef.current.ended
+      ) {
+        console.log("既に音声再生中のため、再生をスキップします");
+        return;
+      }
+
       // 念のため現在のAudioをチェック
       if (audioRef.current.error) {
         console.log(
@@ -44,7 +54,17 @@ export default function Home() {
         audioRef.current = newAudio;
       }
 
+      // 再生開始
       audioRef.current.currentTime = 0;
+
+      // 再生が終了したときのイベントリスナーを一旦削除して再登録
+      const onEnded = () => {
+        console.log("音声再生が終了しました");
+      };
+
+      audioRef.current.removeEventListener("ended", onEnded);
+      audioRef.current.addEventListener("ended", onEnded, { once: true });
+
       audioRef.current.play().catch((error) => {
         console.error("音声再生に失敗しました:", error);
 
@@ -54,6 +74,16 @@ export default function Home() {
           const retryAudio = new Audio(
             `/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav?t=${timestamp}`
           );
+
+          // 再生終了時のイベントリスナーを追加
+          retryAudio.addEventListener(
+            "ended",
+            () => {
+              console.log("再試行音声の再生が完了しました");
+            },
+            { once: true }
+          );
+
           retryAudio.play().catch((e) => {
             console.error("再試行時も音声再生に失敗:", e);
           });
@@ -306,58 +336,59 @@ export default function Home() {
 
     initAudio();
 
-    // Service Workerからのメッセージリスナー
+    // Service Workerからのメッセージを処理
+    let lastNotificationTime = 0;
+    const NOTIFICATION_DEBOUNCE_MS = 2000; // 2秒以内の重複通知を防止
+
     const handleServiceWorkerMessage = (event: MessageEvent) => {
       console.log(
         "メインスレッド: Service Workerからメッセージを受信",
         event.data
       );
 
-      if (event.data && event.data.type === "PLAY_NOTIFICATION_SOUND") {
-        // 音声を再生
-        playNotificationSound();
+      // 通知音再生のメッセージ
+      if (event.data?.type === "PLAY_NOTIFICATION_SOUND") {
+        const now = Date.now();
+        const timeSinceLastNotification = now - lastNotificationTime;
 
-        // 薬のIDが含まれていれば、その薬を取得して通知表示
-        if (event.data.medicineId) {
-          const medicine = medicines.find(
-            (m) => m.id === event.data.medicineId
+        if (timeSinceLastNotification < NOTIFICATION_DEBOUNCE_MS) {
+          console.log(
+            `最近(${timeSinceLastNotification}ms前)に通知音を再生したため、スキップします`
           );
+          return;
+        }
+
+        lastNotificationTime = now;
+
+        const medicineId = event.data.medicineId;
+        console.log("Service Workerからメッセージを受信:", event.data);
+
+        // 特定の薬の通知の場合
+        if (medicineId) {
+          const medicine = medicines.find((m) => m.id === medicineId);
           if (medicine) {
-            // 通知コンポーネントに薬の情報を渡して表示する処理をここに追加できる
             console.log("特定の薬の通知:", medicine);
+            playNotificationSound();
           }
+        } else {
+          // どの薬か特定できない場合でも通知音を再生
+          playNotificationSound();
         }
       }
     };
 
-    // Service Workerが有効かどうかをチェック
-    if ("serviceWorker" in navigator) {
-      // Service Workerの登録状態を確認
-      navigator.serviceWorker.ready.then((registration) => {
-        console.log("Service Worker is ready:", registration.scope);
-      });
-
-      // メッセージリスナーを登録
-      navigator.serviceWorker.addEventListener(
-        "message",
-        handleServiceWorkerMessage
-      );
-    } else {
-      console.warn("このブラウザはService Workerをサポートしていません");
-    }
+    // メッセージイベントリスナーを登録
+    navigator.serviceWorker.addEventListener(
+      "message",
+      handleServiceWorkerMessage
+    );
 
     // クリーンアップ関数
     return () => {
-      if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.removeEventListener(
-          "message",
-          handleServiceWorkerMessage
-        );
-      }
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
+      navigator.serviceWorker.removeEventListener(
+        "message",
+        handleServiceWorkerMessage
+      );
     };
   }, [medicines, playNotificationSound]);
 

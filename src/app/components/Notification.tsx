@@ -82,10 +82,23 @@ export default function Notification({
     ).padStart(2, "0")}`;
   };
 
+  // 通知がクリックされたときのハンドラ
+  const handleNotificationClick = useCallback(
+    (medicine: Medicine) => {
+      if (onNotificationClick) {
+        onNotificationClick(medicine.id);
+      }
+    },
+    [onNotificationClick]
+  );
+
   // 音声を再生する関数
   const playNotificationSound = useCallback(() => {
     // 既に再生中なら再生しない
-    if (isPlaying) return;
+    if (isPlaying) {
+      console.log("既に音声再生中のため、新しい再生はスキップします");
+      return;
+    }
 
     try {
       if (audioRef.current) {
@@ -103,17 +116,12 @@ export default function Notification({
         tempAudio.volume = 1.0;
 
         // モバイルでの自動再生制限に対応するためユーザーインタラクションを模倣
-        interface AudioContextConstructor {
-          new (): AudioContext;
-        }
-
-        interface Window {
-          AudioContext: AudioContextConstructor;
-          webkitAudioContext: AudioContextConstructor;
+        interface WebkitWindow extends Window {
+          webkitAudioContext: typeof AudioContext;
         }
 
         const AudioContextClass =
-          window.AudioContext || (window as Window).webkitAudioContext;
+          window.AudioContext || (window as WebkitWindow).webkitAudioContext;
         if (AudioContextClass) {
           const context = new AudioContextClass();
           context
@@ -150,13 +158,25 @@ export default function Notification({
                 alternativeAudio.volume = 1.0;
                 alternativeAudio.play().catch((err) => {
                   console.warn("代替方法でも音声再生に失敗:", err);
+                  setIsPlaying(false); // 再生に失敗した場合も状態をリセット
+                });
+
+                // 再生完了時の処理を追加
+                alternativeAudio.addEventListener("ended", () => {
+                  console.log("代替方法の音声再生が完了しました");
+                  setIsPlaying(false);
+                  // メモリリークを防ぐため明示的に解放
+                  alternativeAudio.src = "";
+                  alternativeAudio.remove();
                 });
               } else {
                 console.error("音声ファイルが見つかりません:", response.status);
+                setIsPlaying(false);
               }
             })
             .catch((err) => {
               console.error("音声ファイルの確認に失敗:", err);
+              setIsPlaying(false);
             });
         });
 
@@ -183,12 +203,30 @@ export default function Notification({
 
               // もう一度試す（モバイルブラウザでは最初のユーザーインタラクションが必要）
               setTimeout(() => {
+                if (isPlaying) {
+                  console.log(
+                    "再試行をスキップします（既に別の再生処理が進行中）"
+                  );
+                  return;
+                }
+
+                setIsPlaying(true);
                 const retryAudio = new Audio(
                   "/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav"
                 );
                 retryAudio.volume = 1.0;
+
+                // 再生終了時のイベントリスナーを追加
+                retryAudio.addEventListener("ended", () => {
+                  console.log("再試行音声の再生が完了しました");
+                  setIsPlaying(false);
+                  retryAudio.src = "";
+                  retryAudio.remove();
+                });
+
                 retryAudio.play().catch(() => {
                   // エラーは無視（ログが大量に出るのを防ぐ）
+                  setIsPlaying(false);
                 });
               }, 500);
             });
@@ -1116,7 +1154,7 @@ export default function Notification({
           <div className="flex justify-end space-x-2">
             <button
               onClick={() => {
-                onNotificationClick(notificationMedicine.id);
+                handleNotificationClick(notificationMedicine);
                 setShowNotification(false);
               }}
               className="px-4 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"

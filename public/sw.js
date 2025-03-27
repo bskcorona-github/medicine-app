@@ -558,6 +558,22 @@ async function checkScheduledNotifications() {
   let updatedSchedules = false;
   let notificationShown = false;
 
+  // 同時に複数の通知が表示される問題を防止するためのデバウンス実装
+  // 最後の通知から5秒以内に再通知しないようにする
+  const NOTIFICATION_DEBOUNCE_MS = 5000; // 5秒
+  const lastGlobalNotification = self._lastGlobalNotificationTime || 0;
+  const shouldDebounceGlobal =
+    now - lastGlobalNotification < NOTIFICATION_DEBOUNCE_MS;
+
+  if (shouldDebounceGlobal) {
+    console.log(
+      `Service Worker: 最後の通知から${
+        (now - lastGlobalNotification) / 1000
+      }秒しか経過していないため、通知をスキップします`
+    );
+    return false;
+  }
+
   for (let i = 0; i < notificationSchedules.length; i++) {
     const schedule = notificationSchedules[i];
 
@@ -573,8 +589,9 @@ async function checkScheduledNotifications() {
       if (timePassedSinceLastNotification) {
         console.log(`Service Worker: ${schedule.name}の通知時間になりました`);
 
-        // 最後の通知時間を更新
+        // 最後の通知時間を更新（グローバルとこの薬の両方）
         lastNotificationTimes[medicineId] = now;
+        self._lastGlobalNotificationTime = now;
         notificationShown = true;
 
         try {
@@ -587,7 +604,17 @@ async function checkScheduledNotifications() {
             includeUncontrolled: true,
           });
 
+          // 同じメッセージが複数回送信されないようにセット使用
+          const notifiedClients = new Set();
+
           clients.forEach((client) => {
+            // 同じクライアントに二度メッセージを送らない
+            const clientId = client.id;
+            if (notifiedClients.has(clientId)) {
+              return;
+            }
+
+            notifiedClients.add(clientId);
             client.postMessage({
               type: "PLAY_NOTIFICATION_SOUND",
               medicineId: schedule.id,
