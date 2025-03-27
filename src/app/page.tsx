@@ -24,12 +24,17 @@ export default function Home() {
   }, [medicines]);
 
   // 新しい薬を追加
-  const handleAddMedicine = (data: { medicineName: string; time: string }) => {
+  const handleAddMedicine = (data: {
+    medicineName: string;
+    time: string;
+    daily: boolean;
+  }) => {
     const newMedicine: Medicine = {
       id: uuidv4(),
       name: data.medicineName,
       time: data.time,
       taken: false,
+      daily: data.daily,
     };
     setMedicines([...medicines, newMedicine]);
   };

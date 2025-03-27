@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 type MedicineFormData = {
   medicineName: string;
   time: string;
+  daily: boolean;
 };
 
 type MedicineFormProps = {
@@ -17,11 +18,19 @@ export default function MedicineForm({ onAddMedicine }: MedicineFormProps) {
     handleSubmit,
     reset,
     formState: { errors },
-  } = useForm<MedicineFormData>();
+  } = useForm<MedicineFormData>({
+    defaultValues: {
+      daily: true,
+    },
+  });
 
   const onSubmit = (data: MedicineFormData) => {
     onAddMedicine(data);
-    reset();
+    reset({
+      medicineName: "",
+      time: "",
+      daily: true,
+    });
   };
 
   return (
@@ -67,6 +76,18 @@ export default function MedicineForm({ onAddMedicine }: MedicineFormProps) {
           {errors.time && (
             <p className="mt-1 text-sm text-red-600">{errors.time.message}</p>
           )}
+        </div>
+
+        <div className="flex items-center">
+          <input
+            id="daily"
+            type="checkbox"
+            {...register("daily")}
+            className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+          />
+          <label htmlFor="daily" className="ml-2 block text-sm text-gray-700">
+            毎日服用（ONにすると毎日同じ時間に通知されます）
+          </label>
         </div>
 
         <button

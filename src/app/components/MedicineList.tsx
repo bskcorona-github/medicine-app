@@ -5,6 +5,7 @@ export type Medicine = {
   name: string;
   time: string;
   taken: boolean;
+  daily: boolean;
 };
 
 type MedicineListProps = {
