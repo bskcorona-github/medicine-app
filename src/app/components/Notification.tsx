@@ -237,6 +237,7 @@ export default function Notification({
         // Service Workerを登録
         const registration = await navigator.serviceWorker.register("/sw.js", {
           scope: "/",
+          updateViaCache: "none", // キャッシュを使わず常に最新のService Workerを取得
         });
         console.log("Service Worker 登録成功:", registration.scope);
 
@@ -266,7 +267,13 @@ export default function Notification({
         // プッシュ通知の許可を求める
         if (registration.pushManager) {
           try {
-            if (notificationPermission === "granted") {
+            // 通知の許可状態に関わらず、常にプッシュ通知の許可を要求
+            if (notificationPermission !== "denied") {
+              // まだ許可されていない場合は許可を求める
+              if (notificationPermission !== "granted") {
+                await requestNotificationPermission();
+              }
+
               // デバッグ: プッシュ通知のサブスクリプション状態をチェック
               registration.pushManager
                 .getSubscription()
@@ -283,21 +290,26 @@ export default function Notification({
                   }
                 });
 
-              const subscription = await registration.pushManager.subscribe({
-                userVisibleOnly: true,
-                applicationServerKey: urlBase64ToUint8Array(
-                  "BF7cGGTOLlLmP_B4nMjVH2_GFf3jSQIAn09XTKe2t9HwVLFOm0z6oJyPBa1CzC4Uxb9aXO7X_L5Xev-5nGnJkPc"
-                ),
-              });
-              console.log("プッシュ通知の登録成功:", subscription.endpoint);
+              // プッシュ通知の登録を試みる
+              try {
+                const subscription = await registration.pushManager.subscribe({
+                  userVisibleOnly: true,
+                  applicationServerKey: urlBase64ToUint8Array(
+                    "BF7cGGTOLlLmP_B4nMjVH2_GFf3jSQIAn09XTKe2t9HwVLFOm0z6oJyPBa1CzC4Uxb9aXO7X_L5Xev-5nGnJkPc"
+                  ),
+                });
+                console.log("プッシュ通知の登録成功:", subscription.endpoint);
+              } catch (pushSubscribeError) {
+                console.error("プッシュ通知の登録に失敗:", pushSubscribeError);
+              }
             } else {
               console.warn(
-                "プッシュ通知の許可がありません:",
+                "プッシュ通知の許可が拒否されています:",
                 notificationPermission
               );
             }
           } catch (pushError) {
-            console.error("プッシュ通知の登録に失敗:", pushError);
+            console.error("プッシュ通知の登録処理に失敗:", pushError);
           }
         } else {
           console.warn(
@@ -307,14 +319,12 @@ export default function Notification({
 
         // メッセージチャネルのテスト
         if (navigator.serviceWorker.controller) {
-          // デバッグテスト通知をコメントアウト
-          /*
+          // デバッグテスト通知を送信
           navigator.serviceWorker.controller.postMessage({
             type: "DEBUG_TEST",
             time: new Date().toISOString(),
           });
           console.log("Service Workerにデバッグメッセージを送信しました");
-          */
         }
       } catch (error) {
         console.error("Service Worker 登録失敗:", error);
@@ -322,7 +332,7 @@ export default function Notification({
     } else {
       console.warn("このブラウザはService Workerをサポートしていません");
     }
-  }, [notificationPermission]);
+  }, [notificationPermission, requestNotificationPermission]);
 
   // base64文字列をUint8Arrayに変換する関数
   function urlBase64ToUint8Array(base64String: string): Uint8Array {
@@ -342,7 +352,7 @@ export default function Notification({
 
   // ServiceWorkerを定期的に呼び出す処理を追加
   const requestBackgroundSync = useCallback(async () => {
-    if ("serviceWorker" in navigator && "SyncManager" in window) {
+    if ("serviceWorker" in navigator) {
       try {
         const registration = await navigator.serviceWorker.ready;
 
@@ -353,7 +363,7 @@ export default function Notification({
         }
 
         // Periodic Sync APIが使用可能かどうかチェック
-        if (registration.periodicSync) {
+        if ("periodicSync" in registration && registration.periodicSync) {
           // 許可状態を確認
           try {
             const status = await navigator.permissions.query({
@@ -361,18 +371,67 @@ export default function Notification({
             });
 
             if (status.state === "granted") {
+              // 1分ごとの定期的同期を設定（バックグラウンドでの通知チェック用）
               await registration.periodicSync.register("notification-sync", {
-                minInterval: 60 * 60 * 1000, // 1時間ごと
+                minInterval: 60 * 1000, // 1分ごと
               });
-              console.log("定期的バックグラウンド同期を登録しました");
+              console.log(
+                "定期的バックグラウンド同期を登録しました（1分ごと）"
+              );
+
+              // 長期的な同期のバックアップとして1時間ごとの同期も設定
+              await registration.periodicSync.register(
+                "notification-hourly-sync",
+                {
+                  minInterval: 60 * 60 * 1000, // 1時間ごと
+                }
+              );
+              console.log(
+                "バックアップ用の定期的バックグラウンド同期を登録しました（1時間ごと）"
+              );
             } else {
               console.log(
                 "定期的バックグラウンド同期の権限がありません:",
                 status.state
               );
+
+              // 権限がない場合もService Workerへの通知チェック依頼を送信
+              if (navigator.serviceWorker.controller) {
+                navigator.serviceWorker.controller.postMessage({
+                  type: "CHECK_NOTIFICATION_SCHEDULES",
+                  time: new Date().toISOString(),
+                });
+                console.log(
+                  "Service Workerに通知チェックリクエストを送信しました"
+                );
+              }
             }
           } catch (permissionError) {
             console.warn("権限の確認に失敗:", permissionError);
+
+            // エラーが発生した場合もService Workerへの通知チェック依頼を送信
+            if (navigator.serviceWorker.controller) {
+              navigator.serviceWorker.controller.postMessage({
+                type: "CHECK_NOTIFICATION_SCHEDULES",
+                time: new Date().toISOString(),
+              });
+              console.log(
+                "Service Workerに通知チェックリクエストを送信しました"
+              );
+            }
+          }
+        } else {
+          console.warn(
+            "このデバイスは定期的バックグラウンド同期をサポートしていません"
+          );
+
+          // 定期的同期がサポートされていない場合もService Workerへの通知チェック依頼を送信
+          if (navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({
+              type: "CHECK_NOTIFICATION_SCHEDULES",
+              time: new Date().toISOString(),
+            });
+            console.log("Service Workerに通知チェックリクエストを送信しました");
           }
         }
       } catch (error) {

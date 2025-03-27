@@ -110,8 +110,11 @@ function setPeriodicNotificationCheck() {
 
 // 定期的同期イベントのリスナーを追加
 self.addEventListener("periodicsync", (event) => {
-  if (event.tag === "notification-sync") {
-    console.log("Service Worker: 定期的同期イベントを受信");
+  if (
+    event.tag === "notification-sync" ||
+    event.tag === "notification-hourly-sync"
+  ) {
+    console.log(`Service Worker: 定期的同期イベントを受信 (${event.tag})`);
     event.waitUntil(checkScheduledNotifications());
   }
 });
@@ -479,8 +482,13 @@ self.addEventListener("message", (event) => {
     // テスト通知を表示
     self.registration.showNotification("デバッグテスト通知", {
       body: "service workerが正常に動作しています。",
-      icon: "/favicon.ico",
+      icon: "/icon/favicon.ico",
+      badge: "/icon/favicon.ico",
+      vibrate: [200, 100, 200],
       tag: "debug-test",
+      requireInteraction: true,
+      renotify: true,
+      silent: false,
     });
   }
 

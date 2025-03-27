@@ -2,7 +2,7 @@
   "name": "おくすりリマインダー",
   "short_name": "おくすりリマインダー",
   "description": "忘れっぽい人のための薬のリマインダーアプリです",
-  "start_url": "/",
+  "start_url": "/?source=pwa",
   "display": "standalone",
   "background_color": "#d16333",
   "theme_color": "#d16333",
@@ -51,6 +51,9 @@
     "client_mode": "auto"
   },
   "scope": "/",
-  "permissions": ["notifications"],
-  "gcm_sender_id": "103953800507"
+  "permissions": ["notifications", "background-sync"],
+  "gcm_sender_id": "103953800507",
+  "background": {
+    "service_worker": "sw.js"
+  }
 }
