@@ -645,10 +645,14 @@ export default function Notification({
 
   // 1分ごとに薬の時間をチェック
   useEffect(() => {
+    // 最後の通知時間を追跡するためのオブジェクト
+    const lastNotificationTimes: Record<string, number> = {};
+
     const checkMedicationTime = () => {
       const time = formatCurrentTime();
       setCurrentTime(time);
       const today = new Date().toISOString().split("T")[0]; // YYYY-MM-DD形式
+      const now = new Date().getTime();
 
       // 服用していない薬の中で現在時刻に一致するものを確認
       const medicineToNotify = medicines.find((medicine) => {
@@ -660,12 +664,25 @@ export default function Notification({
         const shouldNotify =
           medicine.daily || !reminderShown.has(`${medicine.id}-${today}`);
 
-        return timeMatch && notTaken && shouldNotify;
+        // 最後の通知から1分以上経過しているか確認
+        const lastNotificationTime = lastNotificationTimes[medicine.id] || 0;
+        const timePassedSinceLastNotification =
+          now - lastNotificationTime >= 60000; // 1分 = 60000ms
+
+        return (
+          timeMatch &&
+          notTaken &&
+          shouldNotify &&
+          timePassedSinceLastNotification
+        );
       });
 
       if (medicineToNotify) {
         // 通知を表示
         showNotificationAlert(medicineToNotify);
+
+        // 最後の通知時間を更新
+        lastNotificationTimes[medicineToNotify.id] = now;
 
         // 通知済みとしてマーク
         if (!medicineToNotify.daily) {
@@ -686,8 +703,8 @@ export default function Notification({
       }
     });
 
-    // 5秒ごとにチェック（確実に通知するため間隔を短く）
-    const timer = setInterval(checkMedicationTime, 5000);
+    // 1分ごとにチェック
+    const timer = setInterval(checkMedicationTime, 60000);
 
     return () => clearInterval(timer);
   }, [
