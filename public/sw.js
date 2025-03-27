@@ -226,4 +226,110 @@ self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "SKIP_WAITING") {
     self.skipWaiting();
   }
+
+  // デバッグテストメッセージを処理
+  if (event.data && event.data.type === "DEBUG_TEST") {
+    console.log("Service Worker: デバッグテストメッセージを受信", event.data);
+
+    // 応答を送信
+    if (event.source) {
+      event.source.postMessage({
+        type: "DEBUG_RESPONSE",
+        time: new Date().toISOString(),
+        status: "OK",
+        serviceWorkerState: self.registration ? "登録済み" : "未登録",
+      });
+      console.log("Service Worker: デバッグ応答を送信しました");
+    }
+
+    // 5秒後にテスト通知を送信（デバッグ用）
+    setTimeout(() => {
+      self.registration
+        .showNotification("デバッグテスト通知", {
+          body: "Service Workerが正常に動作しています",
+          icon: "/favicon.ico",
+          badge: "/favicon.ico",
+          vibrate: [200, 100, 200],
+          tag: "debug-test",
+          requireInteraction: true,
+          actions: [
+            {
+              action: "test",
+              title: "テスト",
+            },
+          ],
+        })
+        .then(() => console.log("Service Worker: デバッグテスト通知を表示"))
+        .catch((error) =>
+          console.error("Service Worker: デバッグテスト通知に失敗", error)
+        );
+    }, 5000);
+  }
+
+  // スケジュールされた通知を処理
+  if (event.data && event.data.type === "SCHEDULE_NOTIFICATION") {
+    console.log("Service Worker: スケジュールされた通知を処理", event.data);
+
+    const medicine = event.data.medicine;
+    if (!medicine) {
+      console.error("Service Worker: 通知データが不完全です");
+      return;
+    }
+
+    // 通知を表示
+    const title = "お薬の時間です";
+    const options = {
+      body: `${medicine.name}を服用する時間です`,
+      icon: "/favicon.ico",
+      badge: "/favicon.ico",
+      vibrate: [200, 100, 200, 100, 200],
+      tag: medicine.tag || `medicine-${medicine.id}`,
+      requireInteraction: true,
+      silent: false,
+      renotify: true,
+      actions: [
+        {
+          action: "taken",
+          title: "服用しました",
+        },
+        {
+          action: "later",
+          title: "後で",
+        },
+      ],
+    };
+
+    self.registration
+      .showNotification(title, options)
+      .then(() => {
+        console.log("Service Worker: スケジュールされた通知を表示しました");
+        // クライアントに音声再生メッセージを送信
+        return self.clients.matchAll({
+          type: "window",
+          includeUncontrolled: true,
+        });
+      })
+      .then((clients) => {
+        if (clients.length === 0) {
+          // クライアントがなければ新しいウィンドウを開く
+          const url = self.registration.scope + "?notification=sound";
+          console.log(
+            "Service Worker: スケジュール通知 - クライアントを起動します",
+            url
+          );
+          return self.clients.openWindow(url);
+        }
+
+        // クライアントがある場合はメッセージを送信
+        clients.forEach((client) => {
+          client.postMessage({
+            type: "PLAY_NOTIFICATION_SOUND",
+            medicineId: medicine.id || "",
+          });
+        });
+      })
+      .catch((error) => {
+        console.error("Service Worker: スケジュール通知の表示に失敗", error);
+      });
+  }
 });

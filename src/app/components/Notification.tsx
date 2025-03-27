@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { Medicine } from "./MedicineList";
 
 // Web Notification API用の型定義
@@ -194,7 +194,25 @@ export default function Notification({
         const registration = await navigator.serviceWorker.register("/sw.js", {
           scope: "/",
         });
-        console.log("Service Worker 登録成功:", registration);
+        console.log("Service Worker 登録成功:", registration.scope);
+
+        // デバッグ: ServiceWorkerの状態をチェック
+        console.log(
+          "Service Worker 状態:",
+          registration.active ? "アクティブ" : "非アクティブ"
+        );
+        if (navigator.serviceWorker.controller) {
+          console.log(
+            "ServiceWorker コントローラー存在:",
+            navigator.serviceWorker.controller.scriptURL
+          );
+        } else {
+          console.warn(
+            "ServiceWorker コントローラーがありません - 更新が必要かもしれません"
+          );
+          // 強制的に更新を試みる
+          registration.update();
+        }
 
         // サービスワーカーの更新をチェック
         registration.update().catch((error) => {
@@ -206,17 +224,42 @@ export default function Notification({
           try {
             // @ts-expect-error - WindowのNotificationオブジェクトへのアクセス
             if (Notification.permission === "granted") {
+              // デバッグ: プッシュ通知のサブスクリプション状態をチェック
+              registration.pushManager.getSubscription().then(subscription => {
+                if (subscription) {
+                  console.log("既存のプッシュ通知サブスクリプション:", subscription.endpoint);
+                } else {
+                  console.log("プッシュ通知サブスクリプションがありません、新規作成します");
+                }
+              });
+              
               const subscription = await registration.pushManager.subscribe({
                 userVisibleOnly: true,
                 applicationServerKey: urlBase64ToUint8Array(
                   "BF7cGGTOLlLmP_B4nMjVH2_GFf3jSQIAn09XTKe2t9HwVLFOm0z6oJyPBa1CzC4Uxb9aXO7X_L5Xev-5nGnJkPc"
                 ),
               });
-              console.log("プッシュ通知の登録成功:", subscription);
+              console.log("プッシュ通知の登録成功:", subscription.endpoint);
+            } else {
+              // @ts-expect-error - WindowのNotificationオブジェクトへのアクセス
+              console.warn("プッシュ通知の許可がありません:", Notification.permission);
             }
           } catch (pushError) {
             console.error("プッシュ通知の登録に失敗:", pushError);
           }
+        } else {
+          console.warn(
+            "このブラウザはプッシュ通知マネージャーをサポートしていません"
+          );
+        }
+
+        // メッセージチャネルのテスト
+        if (navigator.serviceWorker.controller) {
+          navigator.serviceWorker.controller.postMessage({
+            type: "DEBUG_TEST",
+            time: new Date().toISOString(),
+          });
+          console.log("Service Workerにデバッグメッセージを送信しました");
         }
       } catch (error) {
         console.error("Service Worker 登録失敗:", error);
@@ -265,6 +308,78 @@ export default function Notification({
     };
   }, [registerServiceWorker]);
 
+  // 定期的な通知をスケジュールする関数
+  const scheduleNotification = useCallback(async (medicine: Medicine) => {
+    if ("serviceWorker" in navigator && "Notification" in window) {
+      try {
+        // @ts-expect-error - WindowのNotificationオブジェクトへのアクセス
+        if (Notification.permission !== "granted") {
+          console.log("通知の許可がありません");
+          return;
+        }
+
+        // 現在時刻から次の通知時刻を計算
+        const now = new Date();
+        const [hours, minutes] = medicine.time.split(":").map(Number);
+        const notificationTime = new Date();
+        notificationTime.setHours(hours, minutes, 0, 0);
+
+        // 時間が過ぎていたら明日の同じ時間にスケジュール
+        if (notificationTime < now) {
+          notificationTime.setDate(notificationTime.getDate() + 1);
+        }
+
+        // 通知までの待機時間（ミリ秒）
+        const waitTime = notificationTime.getTime() - now.getTime();
+        console.log(
+          `${medicine.name}の通知を${waitTime}ミリ秒後にスケジュール`
+        );
+
+        // シミュレートされたプッシュ通知をスケジュール
+        setTimeout(async () => {
+          try {
+            // ServiceWorkerの登録を取得
+            const swRegistration = await navigator.serviceWorker.ready;
+
+            // カスタムのプッシュイベントをシミュレート
+            if (navigator.serviceWorker.controller) {
+              navigator.serviceWorker.controller.postMessage({
+                type: "SCHEDULE_NOTIFICATION",
+                medicine: {
+                  id: medicine.id,
+                  name: medicine.name,
+                  tag: `medicine-${medicine.id}`,
+                },
+              });
+              console.log(`${medicine.name}の通知メッセージを送信しました`);
+            } else {
+              console.warn("ServiceWorkerコントローラーがありません");
+
+              // 代替手段としてローカル通知を使用
+              swRegistration.showNotification("お薬の時間です", {
+                body: `${medicine.name}を服用する時間です`,
+                icon: "/favicon.ico",
+                tag: `medicine-${medicine.id}`,
+                requireInteraction: true,
+              });
+            }
+          } catch (error) {
+            console.error("通知のスケジュールに失敗:", error);
+          }
+        }, waitTime);
+
+        // 毎日の通知の場合は24時間後にも再スケジュール
+        if (medicine.daily) {
+          setTimeout(() => {
+            scheduleNotification(medicine);
+          }, 24 * 60 * 60 * 1000);
+        }
+      } catch (error) {
+        console.error("通知スケジュールに失敗:", error);
+      }
+    }
+  }, []);
+
   // 1分ごとに薬の時間をチェック
   useEffect(() => {
     const checkMedicationTime = () => {
@@ -301,11 +416,24 @@ export default function Notification({
     // 初回実行
     checkMedicationTime();
 
+    // すべての薬剤のスケジュール通知を設定
+    medicines.forEach((medicine) => {
+      if (!medicine.taken) {
+        scheduleNotification(medicine);
+      }
+    });
+
     // 5秒ごとにチェック（確実に通知するため間隔を短く）
     const timer = setInterval(checkMedicationTime, 5000);
 
     return () => clearInterval(timer);
-  }, [medicines, reminderShown, notificationPermission]);
+  }, [
+    medicines,
+    reminderShown,
+    notificationPermission,
+    showNotificationAlert,
+    scheduleNotification,
+  ]);
 
   // 10秒後に未服用のものは自動で「まだ飲んでないかも」通知
   useEffect(() => {
@@ -371,7 +499,7 @@ export default function Notification({
             </button>
             <button
               onClick={() => setShowNotification(false)}
-              className="px-4 py-2 bg-gray-200 text-black rounded-md hover:bg-gray-300"
+              className="px-4 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400"
             >
               後で
             </button>
