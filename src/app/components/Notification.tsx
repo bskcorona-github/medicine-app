@@ -150,10 +150,13 @@ export default function Notification({
       // 現在時刻を使ってキャッシュバスティング
       const timestamp = new Date().getTime();
 
+      // 音声ファイルのパスを調整（sw.jsと統一）
+      const soundPath = "/sounds/001_zundamon_okusuri.wav";
+
+      console.log(`音声ファイルを読み込み: ${soundPath}?t=${timestamp}`);
+
       // 新しいAudio要素を作成（メモリリークを防ぐため、使い捨てにする）
-      const tempAudio = new Audio(
-        `/sounds/001_zundamon_okusuri.wav?t=${timestamp}`
-      );
+      const tempAudio = new Audio(`${soundPath}?t=${timestamp}`);
 
       // 既存のオーディオがあれば解放
       if (audioRef.current) {
@@ -192,10 +195,11 @@ export default function Notification({
       // エラーハンドリングを強化
       tempAudio.addEventListener("error", (e) => {
         console.error("音声読み込みエラー:", e);
+        console.error("音声ファイルパス:", tempAudio.src);
         setIsPlaying(false);
 
         // 代替方法を試す - fetch APIでファイルの存在確認
-        fetch(`/sounds/001_zundamon_okusuri.wav?t=${timestamp}`)
+        fetch(`${soundPath}?t=${timestamp}`)
           .then((response) => {
             if (response.ok) {
               console.log(
@@ -204,7 +208,7 @@ export default function Notification({
 
               // 新しいAudio要素で再試行
               const alternativeAudio = new Audio();
-              alternativeAudio.src = `/sounds/001_zundamon_okusuri.wav?t=${timestamp}`;
+              alternativeAudio.src = `${soundPath}?t=${timestamp}`;
               alternativeAudio.volume = 1.0;
               alternativeAudio.play().catch((err) => {
                 console.warn("代替方法でも音声再生に失敗:", err);
@@ -221,6 +225,10 @@ export default function Notification({
               });
             } else {
               console.error("音声ファイルが見つかりません:", response.status);
+              console.error(
+                "音声ファイルのURL:",
+                `${soundPath}?t=${timestamp}`
+              );
               setIsPlaying(false);
             }
           })
@@ -724,10 +732,20 @@ export default function Notification({
     console.log("🔔 通知コンポーネントを初期化します");
     console.log("===============================================");
 
+    // 音声ファイルのパスを統一
+    const soundPath = "/sounds/001_zundamon_okusuri.wav";
+    console.log(`音声ファイルパス: ${soundPath}`);
+
     // Audio要素を作成
-    const audio = new Audio("/sounds/001_zundamon_okusuri.wav");
+    const audio = new Audio(soundPath);
     audio.preload = "auto"; // 事前に読み込み
     audioRef.current = audio;
+
+    // エラーハンドリングを追加
+    audio.addEventListener("error", (e) => {
+      console.error("初期化時の音声読み込みエラー:", e);
+      console.error("初期化時の音声ファイルパス:", audio.src);
+    });
 
     // 初期化処理は一度だけ実行
     const initialized = localStorage.getItem("notification_initialized");

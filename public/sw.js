@@ -2,6 +2,9 @@
 
 const CACHE_NAME = "medicine-reminder-v2";
 
+// 音声ファイルのパス（アプリ全体で統一）
+const SOUND_FILE_PATH = "/sounds/001_zundamon_okusuri.wav";
+
 // キャッシュするファイル（相対パスに修正）
 const urlsToCache = [
   "/",
@@ -10,6 +13,7 @@ const urlsToCache = [
   "/icon/android-chrome-192x192.png",
   "/icon/android-chrome-512x512.png",
   "/icon/apple-icon.png",
+  SOUND_FILE_PATH,
 ];
 
 // 通知スケジュールを保存する変数
@@ -28,9 +32,6 @@ let lastGlobalNotifications = {
 // favicon.icoのキャッシュ状態を追跡
 let faviconCached = false;
 
-// 音声ファイルのパス
-const SOUND_FILE_PATH = "/sounds/001_zundamon_okusuri.wav";
-
 // グローバルな通知デバウンス値
 const NOTIFICATION_DEBOUNCE_MS = 5000; // 5秒 - グローバル通知間隔
 const SOUND_DEBOUNCE_MS = 3000; // 3秒 - 音声再生間隔
@@ -47,37 +48,47 @@ self.addEventListener("install", (event) => {
       .open(CACHE_NAME)
       .then((cache) => {
         console.log("Service Worker: キャッシュを開きました");
-        // キャッシュのバグを避けるためにaddAllではなくaddを使用
-        return Promise.all(
-          urlsToCache.map((url) => {
-            return fetch(url, { cache: "no-store" })
-              .then((response) => {
-                // 有効なレスポンスのみキャッシュ
-                if (!response.ok) {
-                  throw new Error(`キャッシュに失敗: ${url}`);
-                }
-                return cache.put(url, response);
-              })
-              .catch((error) => {
-                console.error(`キャッシュエラー (${url}):`, error);
-                // エラーがあっても処理を続行
-              });
+
+        // 音声ファイルを優先的にキャッシュ
+        return fetch(SOUND_FILE_PATH, { cache: "no-store" })
+          .then((response) => {
+            if (!response.ok) {
+              throw new Error(
+                `音声ファイルのキャッシュに失敗: ${SOUND_FILE_PATH}`
+              );
+            }
+            console.log(
+              `Service Worker: 音声ファイル ${SOUND_FILE_PATH} をキャッシュしました`
+            );
+            return cache.put(SOUND_FILE_PATH, response.clone());
           })
-        ).then(() => {
-          // 音声ファイルを別途キャッシュ
-          return fetch(SOUND_FILE_PATH, { cache: "no-store" })
-            .then((response) => {
-              if (!response.ok) {
-                throw new Error(
-                  `音声ファイルのキャッシュに失敗: ${SOUND_FILE_PATH}`
-                );
-              }
-              return cache.put(SOUND_FILE_PATH, response);
-            })
-            .catch((error) => {
-              console.error(`音声ファイルのキャッシュエラー: ${error}`);
-            });
-        });
+          .catch((error) => {
+            console.error(
+              `Service Worker: 音声ファイルのキャッシュエラー: ${error}`
+            );
+          })
+          .then(() => {
+            // その他のファイルをキャッシュ
+            return Promise.all(
+              urlsToCache.map((url) => {
+                // 音声ファイルは既にキャッシュ済みなのでスキップ
+                if (url === SOUND_FILE_PATH) return Promise.resolve();
+
+                return fetch(url, { cache: "no-store" })
+                  .then((response) => {
+                    // 有効なレスポンスのみキャッシュ
+                    if (!response.ok) {
+                      throw new Error(`キャッシュに失敗: ${url}`);
+                    }
+                    return cache.put(url, response);
+                  })
+                  .catch((error) => {
+                    console.error(`キャッシュエラー (${url}):`, error);
+                    // エラーがあっても処理を続行
+                  });
+              })
+            );
+          });
       })
       .catch((error) => {
         console.error("Service Worker: キャッシュ処理に失敗", error);
@@ -90,22 +101,35 @@ self.addEventListener("activate", (event) => {
   console.log("Service Worker: アクティブ化");
 
   // すぐにコントロールを取得
-  event.waitUntil(clients.claim());
-
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames
-          .filter((cacheName) => {
-            return cacheName !== CACHE_NAME;
-          })
-          .map((cacheName) => {
-            console.log("Service Worker: 古いキャッシュを削除中", cacheName);
-            return caches.delete(cacheName);
-          })
-      );
-    })
+    Promise.all([
+      // 以前のクライアントを制御
+      clients.claim(),
+
+      // 古いキャッシュを削除
+      caches.keys().then((cacheNames) => {
+        return Promise.all(
+          cacheNames
+            .filter((cacheName) => {
+              return cacheName !== CACHE_NAME;
+            })
+            .map((cacheName) => {
+              console.log("Service Worker: 古いキャッシュを削除中", cacheName);
+              return caches.delete(cacheName);
+            })
+        );
+      }),
+
+      // スケジュールをロード
+      loadSchedulesFromIndexedDB(),
+
+      // 通知をすぐにチェック
+      checkScheduledNotifications(),
+    ])
   );
+
+  // 定期的な通知チェックを開始
+  setPeriodicNotificationCheck();
 });
 
 // Service Workerがアクティブになったらスケジュールと定期チェックを開始
@@ -555,6 +579,142 @@ self.addEventListener("message", (event) => {
     removeAllNotificationSchedules();
   }
 });
+
+// 通知を表示する関数
+function showNotification(medicine) {
+  if (!medicine) {
+    console.error("Service Worker: 通知データが不足しています");
+    return;
+  }
+
+  const now = Date.now();
+
+  // グローバルな通知デバウンスを確認
+  const lastGlobalNotification = lastGlobalNotifications.notification || 0;
+  if (now - lastGlobalNotification < NOTIFICATION_DEBOUNCE_MS) {
+    console.log(
+      `Service Worker: 最後の通知から${
+        (now - lastGlobalNotification) / 1000
+      }秒しか経過していないため、通知をスキップします`
+    );
+    return;
+  }
+
+  // 特定の薬の最後の通知時間も確認
+  const lastNotificationTime = lastNotificationTimes[medicine.id] || 0;
+  if (now - lastNotificationTime < NOTIFICATION_MIN_INTERVAL) {
+    console.log(
+      `Service Worker: ${medicine.name}の通知は最近表示されたため、スキップします`
+    );
+    return;
+  }
+
+  // 最後の通知時間を更新
+  lastNotificationTimes[medicine.id] = now;
+  lastGlobalNotifications.notification = now;
+
+  // 通知を表示
+  self.registration
+    .showNotification("お薬の時間です", {
+      body: `${medicine.name}を服用する時間です`,
+      icon: "/icon/favicon.ico",
+      badge: "/icon/favicon.ico",
+      vibrate: [200, 100, 200],
+      tag: medicine.tag || `medicine-${medicine.id}`,
+      requireInteraction: true,
+      renotify: true,
+      silent: false,
+      actions: [
+        {
+          action: "taken",
+          title: "服用しました",
+        },
+        {
+          action: "later",
+          title: "後で",
+        },
+      ],
+      data: {
+        medicineId: medicine.id,
+        name: medicine.name,
+        timeStamp: new Date().toISOString(),
+      },
+    })
+    .then(() => {
+      console.log(`Service Worker: ${medicine.name}の通知を表示しました`);
+    })
+    .catch((error) => {
+      console.error(`Service Worker: 通知の表示に失敗しました: ${error}`);
+    });
+}
+
+// 通知スケジュールを登録する関数
+function registerNotificationSchedule(medicine) {
+  if (!medicine || !medicine.id || !medicine.time) {
+    console.error(
+      "Service Worker: 通知スケジュールの登録に必要なデータが不足しています"
+    );
+    return;
+  }
+
+  // 重複を避けるために同じIDの既存のスケジュールを探す
+  const existingIndex = notificationSchedules.findIndex(
+    (schedule) => schedule.id === medicine.id
+  );
+
+  if (existingIndex >= 0) {
+    // 既存のスケジュールを更新
+    notificationSchedules[existingIndex] = medicine;
+    console.log(
+      `Service Worker: ${medicine.name}の通知スケジュールを更新しました`
+    );
+  } else {
+    // 新しいスケジュールを追加
+    notificationSchedules.push(medicine);
+    console.log(
+      `Service Worker: ${medicine.name}の通知スケジュールを追加しました（合計: ${notificationSchedules.length}件）`
+    );
+  }
+
+  // スケジュールをIndexedDBに保存
+  saveSchedulesToIndexedDB();
+}
+
+// 特定の薬の通知スケジュールを削除する関数
+function removeNotificationSchedule(medicineId) {
+  if (!medicineId) {
+    console.error(
+      "Service Worker: 削除する通知スケジュールのIDが指定されていません"
+    );
+    return;
+  }
+
+  const initialLength = notificationSchedules.length;
+  notificationSchedules = notificationSchedules.filter(
+    (schedule) => schedule.id !== medicineId
+  );
+
+  if (notificationSchedules.length < initialLength) {
+    console.log(
+      `Service Worker: ${medicineId}の通知スケジュールを削除しました（残り: ${notificationSchedules.length}件）`
+    );
+    saveSchedulesToIndexedDB();
+  } else {
+    console.log(
+      `Service Worker: ${medicineId}の通知スケジュールは見つかりませんでした`
+    );
+  }
+}
+
+// すべての通知スケジュールを削除する関数
+function removeAllNotificationSchedules() {
+  const count = notificationSchedules.length;
+  notificationSchedules = [];
+  console.log(
+    `Service Worker: ${count}件のすべての通知スケジュールを削除しました`
+  );
+  saveSchedulesToIndexedDB();
+}
 
 // スケジュールされた通知をチェックする関数
 async function checkScheduledNotifications() {

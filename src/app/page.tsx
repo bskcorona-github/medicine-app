@@ -47,9 +47,8 @@ export default function Home() {
           "エラー状態のオーディオを検出したため、新しいインスタンスを作成します"
         );
         const timestamp = new Date().getTime();
-        const newAudio = new Audio(
-          `/sounds/001_zundamon_okusuri.wav?t=${timestamp}`
-        );
+        const soundPath = "/sounds/001_zundamon_okusuri.wav";
+        const newAudio = new Audio(`${soundPath}?t=${timestamp}`);
         newAudio.preload = "auto";
         audioRef.current = newAudio;
       }
@@ -71,9 +70,8 @@ export default function Home() {
         // 再生に失敗した場合は新しいインスタンスで再試行
         setTimeout(() => {
           const timestamp = new Date().getTime();
-          const retryAudio = new Audio(
-            `/sounds/001_zundamon_okusuri.wav?t=${timestamp}`
-          );
+          const soundPath = "/sounds/001_zundamon_okusuri.wav";
+          const retryAudio = new Audio(`${soundPath}?t=${timestamp}`);
 
           // 再生終了時のイベントリスナーを追加
           retryAudio.addEventListener(
@@ -288,19 +286,19 @@ export default function Home() {
   useEffect(() => {
     // Audio要素の作成と事前読み込み（キャッシュバスティングを追加）
     const timestamp = new Date().getTime();
-    const audio = new Audio(`/sounds/001_zundamon_okusuri.wav?t=${timestamp}`);
+    const soundPath = "/sounds/001_zundamon_okusuri.wav";
+    const audio = new Audio(`${soundPath}?t=${timestamp}`);
     audio.preload = "auto"; // 事前に読み込み
     audioRef.current = audio;
 
     // 音声読み込みエラーのハンドリングを追加
     audio.addEventListener("error", (e) => {
       console.error("音声読み込みエラー:", e);
+      console.error("音声ファイルパス:", audio.src);
       // エラー発生時に再試行
       setTimeout(() => {
         const newTimestamp = new Date().getTime();
-        const retryAudio = new Audio(
-          `/sounds/001_zundamon_okusuri.wav?t=${newTimestamp}`
-        );
+        const retryAudio = new Audio(`${soundPath}?t=${newTimestamp}`);
         retryAudio.preload = "auto";
         audioRef.current = retryAudio;
       }, 1000);
