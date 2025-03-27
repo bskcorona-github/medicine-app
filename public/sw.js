@@ -4,12 +4,12 @@ const CACHE_NAME = "medicine-reminder-v2";
 
 // キャッシュするファイル（相対パスに修正）
 const urlsToCache = [
-  "./",
-  "./index.html",
-  "./icon/favicon.ico",
-  "./icon/android-chrome-192x192.png",
-  "./icon/android-chrome-512x512.png",
-  "./icon/apple-icon.png",
+  "/",
+  "/index.html",
+  "/icon/favicon.ico",
+  "/icon/android-chrome-192x192.png",
+  "/icon/android-chrome-512x512.png",
+  "/icon/apple-icon.png",
 ];
 
 // 通知スケジュールを保存する変数
@@ -17,6 +17,9 @@ let notificationSchedules = [];
 
 // 最後の通知時間を記録するオブジェクト
 let lastNotificationTimes = {};
+
+// favicon.icoのキャッシュ状態を追跡
+let faviconCached = false;
 
 // インストール時に実行
 self.addEventListener("install", (event) => {
@@ -28,10 +31,10 @@ self.addEventListener("install", (event) => {
       .open(CACHE_NAME)
       .then((cache) => {
         console.log("Service Worker: キャッシュを開きました");
-        // エラーをキャッチするため個別にキャッシュ
+        // キャッシュのバグを避けるためにaddAllではなくaddを使用
         return Promise.all(
           urlsToCache.map((url) => {
-            return fetch(url)
+            return fetch(url, { cache: "no-store" })
               .then((response) => {
                 // 有効なレスポンスのみキャッシュ
                 if (!response.ok) {
@@ -216,6 +219,7 @@ async function checkScheduledNotifications() {
   );
   const now = new Date().getTime();
   let updatedSchedules = false;
+  let notificationShown = false;
 
   for (let i = 0; i < notificationSchedules.length; i++) {
     const schedule = notificationSchedules[i];
@@ -234,37 +238,55 @@ async function checkScheduledNotifications() {
 
         // 最後の通知時間を更新
         lastNotificationTimes[medicineId] = now;
+        notificationShown = true;
 
-        // 通知を表示
-        await showNotificationForMedicine(schedule);
+        try {
+          // 通知を表示
+          await showNotificationForMedicine(schedule);
 
-        // 毎日の通知の場合は、次の日の同じ時間に再スケジュール
-        if (schedule.daily) {
-          // 時刻を解析
-          const [hours, minutes] = schedule.time.split(":").map(Number);
-          const nextDate = new Date();
-          nextDate.setHours(hours, minutes, 0, 0);
+          // フォアグラウンドのクライアントも通知
+          const clients = await self.clients.matchAll({
+            type: "window",
+            includeUncontrolled: true,
+          });
 
-          // 今日の指定時刻がすでに過ぎている場合は明日にスケジュール
-          if (nextDate.getTime() < now) {
-            nextDate.setDate(nextDate.getDate() + 1);
+          clients.forEach((client) => {
+            client.postMessage({
+              type: "PLAY_NOTIFICATION_SOUND",
+              medicineId: schedule.id,
+            });
+          });
+
+          // 毎日の通知の場合は、次の日の同じ時間に再スケジュール
+          if (schedule.daily) {
+            // 時刻を解析
+            const [hours, minutes] = schedule.time.split(":").map(Number);
+            const nextDate = new Date();
+            nextDate.setHours(hours, minutes, 0, 0);
+
+            // 今日の指定時刻がすでに過ぎている場合は明日にスケジュール
+            if (nextDate.getTime() < now) {
+              nextDate.setDate(nextDate.getDate() + 1);
+            }
+
+            schedule.nextNotification = nextDate.getTime();
+            updatedSchedules = true;
+            console.log(
+              `Service Worker: ${schedule.name}の次回通知を${new Date(
+                schedule.nextNotification
+              ).toLocaleString()}に設定`
+            );
+          } else {
+            // 一度限りの通知の場合は、スケジュールから削除
+            notificationSchedules.splice(i, 1);
+            i--; // インデックスを調整
+            updatedSchedules = true;
+            console.log(
+              `Service Worker: ${schedule.name}のスケジュールを削除しました`
+            );
           }
-
-          schedule.nextNotification = nextDate.getTime();
-          updatedSchedules = true;
-          console.log(
-            `Service Worker: ${schedule.name}の次回通知を${new Date(
-              schedule.nextNotification
-            ).toLocaleString()}に設定`
-          );
-        } else {
-          // 一度限りの通知の場合は、スケジュールから削除
-          notificationSchedules.splice(i, 1);
-          i--; // インデックスを調整
-          updatedSchedules = true;
-          console.log(
-            `Service Worker: ${schedule.name}のスケジュールを削除しました`
-          );
+        } catch (error) {
+          console.error(`Service Worker: 通知の表示に失敗しました: ${error}`);
         }
       } else {
         console.log(
@@ -278,15 +300,89 @@ async function checkScheduledNotifications() {
   if (updatedSchedules) {
     saveSchedulesToIndexedDB();
   }
+
+  // 通知が表示された場合はアプリを起動する（バックグラウンドでも通知を確実に届けるため）
+  if (notificationShown) {
+    // クライアントの状態を確認
+    const clients = await self.clients.matchAll({
+      type: "window",
+      includeUncontrolled: true,
+    });
+
+    if (clients.length === 0) {
+      // クライアントが存在しない場合（アプリが閉じている場合）
+      // スマホでもバックグラウンドで通知が表示されるようにする
+      console.log(
+        "Service Worker: クライアントが見つかりません、音声再生用にウィンドウを起動しようとします"
+      );
+
+      try {
+        // URLにパラメータを付けてクライアントを起動する試み
+        await self.clients.openWindow(
+          `${self.registration.scope}?notification=sound&time=${Date.now()}`
+        );
+        console.log(
+          "Service Worker: バックグラウンド通知のためにクライアントを起動しました"
+        );
+      } catch (error) {
+        console.error("Service Worker: クライアント起動エラー", error);
+      }
+    } else {
+      console.log("Service Worker: 既存のクライアントに通知を送信します");
+    }
+  }
+
+  return notificationShown;
 }
 
 // フェッチ時に実行（キャッシュがあればそれを返す）
 self.addEventListener("fetch", (event) => {
+  // faviconリクエストの無限ループを防止
+  if (event.request.url.includes("favicon.ico")) {
+    // すでにキャッシュ済みの場合は単純に処理
+    if (faviconCached) {
+      event.respondWith(
+        caches.match(event.request).then((response) => {
+          return response || fetch(event.request, { cache: "force-cache" });
+        })
+      );
+      return;
+    }
+
+    // まだキャッシュされていない場合は一度だけキャッシュ
+    event.respondWith(
+      caches.match(event.request).then((response) => {
+        // キャッシュが見つかった場合はそれを返す
+        if (response) {
+          faviconCached = true;
+          return response;
+        }
+
+        // キャッシュが見つからない場合は1回だけネットワークからフェッチ
+        return fetch(event.request, { cache: "force-cache" }).then(
+          (fetchResponse) => {
+            // レスポンスをキャッシュに保存
+            if (fetchResponse.ok) {
+              const responseToCache = fetchResponse.clone();
+              caches.open(CACHE_NAME).then((cache) => {
+                cache.put(event.request, responseToCache);
+                faviconCached = true;
+              });
+            }
+            return fetchResponse;
+          }
+        );
+      })
+    );
+    return;
+  }
+
   // navigationリクエストかどうかをチェック
   if (event.request.mode === "navigate") {
     console.log("Service Worker: ナビゲーションリクエスト", event.request.url);
   }
 
+  // 音声ファイルやその他のリソースのリクエスト処理
   event.respondWith(
     caches
       .match(event.request)
@@ -302,7 +398,9 @@ self.addEventListener("fetch", (event) => {
           "Service Worker: ネットワークからフェッチ",
           event.request.url
         );
-        return fetch(event.request);
+
+        // no-storeオプションを追加して無限ループを防止
+        return fetch(event.request, { cache: "no-store" });
       })
       .catch((error) => {
         console.error("Service Worker: フェッチエラー", error);
@@ -622,6 +720,12 @@ async function showNotificationForMedicine(schedule) {
           title: "後で",
         },
       ],
+      // 重要: Androidの一部バージョンでの問題を回避するためのデータ
+      data: {
+        medicineId: schedule.id,
+        name: schedule.name,
+        timeStamp: new Date().toISOString(),
+      },
     });
 
     console.log(`Service Worker: ${schedule.name}の通知を表示しました`);
@@ -638,14 +742,24 @@ async function showNotificationForMedicine(schedule) {
         "Service Worker: クライアントが見つかりません、新しいウィンドウを開きます"
       );
       // アプリを起動する試み
-      return self.clients.openWindow(
-        `${self.registration.scope}?notification=medicine&id=${schedule.id}`
-      );
+      try {
+        await self.clients.openWindow(
+          `${self.registration.scope}?notification=medicine&id=${
+            schedule.id
+          }&time=${Date.now()}`
+        );
+        console.log("Service Worker: 通知のためにクライアントを起動しました");
+      } catch (error) {
+        console.error("Service Worker: クライアント起動エラー", error);
+      }
     }
+
+    return true;
   } catch (error) {
     console.error(
       `Service Worker: ${schedule.name}の通知表示に失敗しました`,
       error
     );
+    return false;
   }
 }

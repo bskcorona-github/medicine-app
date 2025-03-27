@@ -9,7 +9,7 @@
   "orientation": "portrait",
   "icons": [
     {
-      "src": "/favicon.ico",
+      "src": "/icon/favicon.ico",
       "sizes": "64x64",
       "type": "image/x-icon",
       "purpose": "any"
@@ -51,9 +51,24 @@
     "client_mode": "auto"
   },
   "scope": "/",
-  "permissions": ["notifications", "background-sync"],
+  "permissions": ["notifications", "background-sync", "push"],
   "gcm_sender_id": "103953800507",
   "background": {
-    "service_worker": "sw.js"
-  }
+    "service_worker": "sw.js",
+    "fetch": {
+      "mode": "cors"
+    }
+  },
+  "display_override": ["standalone", "window-controls-overlay"],
+  "edge_side_panel": {
+    "preferred_width": 400
+  },
+  "web_apps": [
+    {
+      "web_app_identity": "https://medicine-app.example.com",
+      "launch_handler": {
+        "client_mode": ["navigate-existing", "auto"]
+      }
+    }
+  ]
 }

@@ -106,53 +106,79 @@ export default function Home() {
     setEditingMedicine(null);
   }, []);
 
-  // URLパラメータから通知アクションを処理
+  // URL パラメータの処理
   useEffect(() => {
-    // クライアントサイドでのみ実行
     if (typeof window !== "undefined") {
-      const urlParams = new URLSearchParams(window.location.search);
-      const action = urlParams.get("action");
-      const id = urlParams.get("id");
-      const notification = urlParams.get("notification");
+      // パラメータの取得
+      const params = new URLSearchParams(window.location.search);
+      const action = params.get("action");
+      const id = params.get("id");
+      const notification = params.get("notification");
 
       console.log("URLパラメータを検出:", { action, id, notification });
 
-      // 通知から「服用しました」ボタンがクリックされた場合
-      if (action === "taken" && id) {
-        // medicine-{id} または medicine-reminder-{id} から id を抽出
-        const medicineId = id.replace("medicine-", "").replace("reminder-", "");
+      // サービスワーカーからのリダイレクトの場合（通知音を再生）
+      if (notification === "sound") {
+        console.log("通知音再生リクエストを検出");
+        playNotificationSound();
 
-        // 該当の薬を服用済みにする
-        if (medicineId) {
-          console.log("服用済みアクションを実行します:", medicineId);
-          handleTakeMedicine(medicineId);
-
-          // URLパラメータをクリア
-          window.history.replaceState(
-            {},
-            document.title,
-            window.location.pathname
-          );
+        // 対象のお薬IDがある場合
+        if (id) {
+          console.log(`お薬ID ${id} の通知を処理`);
+          // 服用済みでない場合だけ処理
+          const medicine = medicines.find((m) => m.id === id && !m.taken);
+          if (medicine) {
+            // 服用済みかどうかの確認ダイアログを表示
+            const confirmed = window.confirm(
+              `${medicine.name}を服用しましたか？\n\n「OK」を押すと服用済みになります。\n「キャンセル」を押すと後で通知します。`
+            );
+            if (confirmed) {
+              handleTakeMedicine(id);
+            }
+          }
         }
+
+        // URLパラメータをクリア（ユーザーが戻るボタンを押したときにループしないように）
+        if (window.history && window.history.replaceState) {
+          const cleanUrl = window.location.pathname;
+          window.history.replaceState({}, document.title, cleanUrl);
+        }
+        return;
       }
 
-      // 通知音を再生する場合
-      if (notification === "sound") {
-        console.log("通知音を再生します");
-        // モバイルでの自動再生制限に対応するため遅延させる
-        setTimeout(() => {
-          playNotificationSound();
-        }, 1000);
+      // Service Workerからの通知アクションの処理
+      if (action === "taken" && id) {
+        console.log(`服用完了アクション: ${id}`);
+        handleTakeMedicine(id);
 
         // URLパラメータをクリア
-        window.history.replaceState(
-          {},
-          document.title,
-          window.location.pathname
-        );
+        if (window.history && window.history.replaceState) {
+          const cleanUrl = window.location.pathname;
+          window.history.replaceState({}, document.title, cleanUrl);
+        }
+        return;
+      }
+
+      // 新規追加アクション
+      if (action === "add") {
+        console.log("新規追加アクション");
+        // 編集中の薬をリセット（新規追加モードにする）
+        setEditingMedicine(null);
+
+        // URLパラメータをクリア
+        if (window.history && window.history.replaceState) {
+          const cleanUrl = window.location.pathname;
+          window.history.replaceState({}, document.title, cleanUrl);
+        }
+
+        // フォームが見えるようにスクロール
+        window.scrollTo({
+          top: 0,
+          behavior: "smooth",
+        });
       }
     }
-  }, [handleTakeMedicine, playNotificationSound]);
+  }, [medicines, handleTakeMedicine, playNotificationSound]);
 
   // Service Workerからのメッセージを受信する
   useEffect(() => {

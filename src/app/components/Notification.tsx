@@ -81,12 +81,17 @@ export default function Notification({
     try {
       if (audioRef.current) {
         setIsPlaying(true);
-        audioRef.current.currentTime = 0;
 
-        // 音量を確認
-        if (audioRef.current.volume === 0) {
-          audioRef.current.volume = 1;
-        }
+        // 現在時刻を使ってキャッシュバスティング
+        const timestamp = new Date().getTime();
+
+        // 新しいAudio要素を作成（メモリリークを防ぐため、使い捨てにする）
+        const tempAudio = new Audio(
+          `/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav?t=${timestamp}`
+        );
+
+        // 音量設定
+        tempAudio.volume = 1.0;
 
         // モバイルでの自動再生制限に対応するためユーザーインタラクションを模倣
         interface AudioContextConstructor {
@@ -104,40 +109,45 @@ export default function Notification({
           const context = new AudioContextClass();
           context
             .resume()
-            .then(() => {
-              console.log("AudioContext resumed successfully");
-            })
-            .catch((error) => {
-              console.error("AudioContext resume failed:", error);
-            });
+            .catch((err) => console.log("AudioContext resume error:", err));
         }
 
-        const playPromise = audioRef.current.play();
+        // エラーハンドリングを強化
+        tempAudio.addEventListener("error", (e) => {
+          console.error("音声読み込みエラー:", e);
+          setIsPlaying(false);
+        });
+
+        // 再生完了時の処理
+        tempAudio.addEventListener("ended", () => {
+          setIsPlaying(false);
+          // メモリリークを防ぐため明示的に解放
+          tempAudio.src = "";
+          tempAudio.remove();
+        });
+
+        // 安全に再生するためタイムアウト設定
+        const playPromise = tempAudio.play();
 
         if (playPromise !== undefined) {
           playPromise
             .then(() => {
-              // 再生終了時にフラグをリセット
-              audioRef.current?.addEventListener(
-                "ended",
-                () => {
-                  setIsPlaying(false);
-                },
-                { once: true }
-              );
+              console.log("音声再生を開始しました");
             })
             .catch((error) => {
               console.error("音声再生に失敗しました:", error);
               setIsPlaying(false);
 
-              // エラーが発生した場合、再度試行
+              // もう一度試す（モバイルブラウザでは最初のユーザーインタラクションが必要）
               setTimeout(() => {
-                if (audioRef.current) {
-                  audioRef.current.play().catch((retryError) => {
-                    console.error("音声再生の再試行に失敗:", retryError);
-                  });
-                }
-              }, 1000);
+                const retryAudio = new Audio(
+                  "/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav"
+                );
+                retryAudio.volume = 1.0;
+                retryAudio.play().catch(() => {
+                  // エラーは無視（ログが大量に出るのを防ぐ）
+                });
+              }, 500);
             });
         }
       }
@@ -164,13 +174,26 @@ export default function Notification({
           "Notification" in window &&
           notificationPermission === "granted"
         ) {
-          // ブラウザ通知を表示
-          new window.Notification("お薬の時間です", {
-            body: `${medicine.name}を服用する時間です`,
-            icon: "/icon/favicon.ico", // アイコンを追加して目立たせる
-            tag: `medicine-${medicine.id}`, // 同じタグの通知は上書きされる
-            requireInteraction: true, // ユーザーがアクションを起こすまで通知を表示したままにする
-          });
+          // Service Workerを通じて通知を表示（バックグラウンドでも確実に通知されるため）
+          if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({
+              type: "SCHEDULE_NOTIFICATION",
+              medicine: {
+                id: medicine.id,
+                name: medicine.name,
+                tag: `medicine-${medicine.id}`,
+              },
+            });
+            console.log(`${medicine.name}の通知をService Workerに依頼しました`);
+          } else {
+            // フォールバックとしてブラウザ通知を直接表示
+            new window.Notification("お薬の時間です", {
+              body: `${medicine.name}を服用する時間です`,
+              icon: "/icon/favicon.ico", // アイコンを追加して目立たせる
+              tag: `medicine-${medicine.id}`, // 同じタグの通知は上書きされる
+              requireInteraction: true, // ユーザーがアクションを起こすまで通知を表示したままにする
+            });
+          }
         }
       } catch (error) {
         console.error("ブラウザ通知の表示に失敗しました:", error);
@@ -232,32 +255,45 @@ export default function Notification({
 
   // Service Workerを登録する関数
   const registerServiceWorker = useCallback(async () => {
+    // スマホで通知を確実に受け取るために必要なService Worker登録
     if ("serviceWorker" in navigator) {
       try {
-        // Service Workerを登録
+        // 現在の登録状態を確認
+        const existingRegistration =
+          await navigator.serviceWorker.getRegistration();
+
+        // 既に登録されていれば再登録をスキップ
+        if (existingRegistration && existingRegistration.active) {
+          console.log(
+            "Service Worker 既に登録済み:",
+            existingRegistration.scope
+          );
+
+          // デバッグ: ServiceWorkerの状態をチェック
+          console.log("Service Worker 状態: アクティブ");
+
+          if (navigator.serviceWorker.controller) {
+            console.log(
+              "ServiceWorker コントローラー存在:",
+              navigator.serviceWorker.controller.scriptURL
+            );
+
+            // サービスワーカーが正常に動作していることを確認するためのテスト通知
+            sendDebugMessageToServiceWorker();
+
+            // プッシュ通知の許可状態を確認し必要なら許可を求める
+            handlePushPermission(existingRegistration);
+
+            return existingRegistration;
+          }
+        }
+
+        // Service Workerを登録（新規または更新）
         const registration = await navigator.serviceWorker.register("/sw.js", {
           scope: "/",
           updateViaCache: "none", // キャッシュを使わず常に最新のService Workerを取得
         });
         console.log("Service Worker 登録成功:", registration.scope);
-
-        // デバッグ: ServiceWorkerの状態をチェック
-        console.log(
-          "Service Worker 状態:",
-          registration.active ? "アクティブ" : "非アクティブ"
-        );
-        if (navigator.serviceWorker.controller) {
-          console.log(
-            "ServiceWorker コントローラー存在:",
-            navigator.serviceWorker.controller.scriptURL
-          );
-        } else {
-          console.warn(
-            "ServiceWorkerコントローラーがありません - 更新が必要かもしれません"
-          );
-          // 強制的に更新を試みる
-          registration.update();
-        }
 
         // サービスワーカーの更新をチェック
         registration.update().catch((error) => {
@@ -265,74 +301,90 @@ export default function Notification({
         });
 
         // プッシュ通知の許可を求める
-        if (registration.pushManager) {
-          try {
-            // 通知の許可状態に関わらず、常にプッシュ通知の許可を要求
-            if (notificationPermission !== "denied") {
-              // まだ許可されていない場合は許可を求める
-              if (notificationPermission !== "granted") {
-                await requestNotificationPermission();
-              }
+        handlePushPermission(registration);
 
-              // デバッグ: プッシュ通知のサブスクリプション状態をチェック
-              registration.pushManager
-                .getSubscription()
-                .then((subscription) => {
-                  if (subscription) {
-                    console.log(
-                      "既存のプッシュ通知サブスクリプション:",
-                      subscription.endpoint
-                    );
-                  } else {
-                    console.log(
-                      "プッシュ通知サブスクリプションがありません、新規作成します"
-                    );
-                  }
-                });
+        // 一度テスト通知を送信
+        sendDebugMessageToServiceWorker();
 
-              // プッシュ通知の登録を試みる
-              try {
-                const subscription = await registration.pushManager.subscribe({
-                  userVisibleOnly: true,
-                  applicationServerKey: urlBase64ToUint8Array(
-                    "BF7cGGTOLlLmP_B4nMjVH2_GFf3jSQIAn09XTKe2t9HwVLFOm0z6oJyPBa1CzC4Uxb9aXO7X_L5Xev-5nGnJkPc"
-                  ),
-                });
-                console.log("プッシュ通知の登録成功:", subscription.endpoint);
-              } catch (pushSubscribeError) {
-                console.error("プッシュ通知の登録に失敗:", pushSubscribeError);
-              }
-            } else {
-              console.warn(
-                "プッシュ通知の許可が拒否されています:",
-                notificationPermission
-              );
-            }
-          } catch (pushError) {
-            console.error("プッシュ通知の登録処理に失敗:", pushError);
-          }
-        } else {
-          console.warn(
-            "このブラウザはプッシュ通知マネージャーをサポートしていません"
-          );
-        }
-
-        // メッセージチャネルのテスト
-        if (navigator.serviceWorker.controller) {
-          // デバッグテスト通知を送信
-          navigator.serviceWorker.controller.postMessage({
-            type: "DEBUG_TEST",
-            time: new Date().toISOString(),
-          });
-          console.log("Service Workerにデバッグメッセージを送信しました");
-        }
+        return registration;
       } catch (error) {
         console.error("Service Worker 登録失敗:", error);
       }
     } else {
       console.warn("このブラウザはService Workerをサポートしていません");
     }
-  }, [notificationPermission, requestNotificationPermission]);
+
+    return null;
+  }, [notificationPermission]);
+
+  // デバッグメッセージをService Workerに送信する関数
+  const sendDebugMessageToServiceWorker = useCallback(() => {
+    if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({
+        type: "DEBUG_TEST",
+        time: new Date().toISOString(),
+      });
+      console.log("Service Workerにデバッグメッセージを送信しました");
+    }
+  }, []);
+
+  // プッシュ通知の許可を処理する関数
+  const handlePushPermission = useCallback(
+    async (registration: ServiceWorkerRegistration) => {
+      if (registration.pushManager) {
+        try {
+          // 通知の許可状態に関わらず、常にプッシュ通知の許可を要求
+          if (notificationPermission !== "denied") {
+            // まだ許可されていない場合は許可を求める
+            if (notificationPermission !== "granted") {
+              await requestNotificationPermission();
+            }
+
+            // プッシュ通知のサブスクリプション状態をチェック
+            const subscription =
+              await registration.pushManager.getSubscription();
+
+            if (subscription) {
+              console.log(
+                "既存のプッシュ通知サブスクリプション:",
+                subscription.endpoint
+              );
+              return;
+            }
+
+            console.log(
+              "プッシュ通知サブスクリプションがありません、新規作成します"
+            );
+
+            // プッシュ通知の登録を試みる
+            try {
+              const subscription = await registration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: urlBase64ToUint8Array(
+                  "BF7cGGTOLlLmP_B4nMjVH2_GFf3jSQIAn09XTKe2t9HwVLFOm0z6oJyPBa1CzC4Uxb9aXO7X_L5Xev-5nGnJkPc"
+                ),
+              });
+              console.log("プッシュ通知の登録成功:", subscription.endpoint);
+            } catch (pushSubscribeError) {
+              console.error("プッシュ通知の登録に失敗:", pushSubscribeError);
+            }
+          } else {
+            console.warn(
+              "プッシュ通知の許可が拒否されています:",
+              notificationPermission
+            );
+          }
+        } catch (pushError) {
+          console.error("プッシュ通知の登録処理に失敗:", pushError);
+        }
+      } else {
+        console.warn(
+          "このブラウザはプッシュ通知マネージャーをサポートしていません"
+        );
+      }
+    },
+    [notificationPermission, requestNotificationPermission]
+  );
 
   // base64文字列をUint8Arrayに変換する関数
   function urlBase64ToUint8Array(base64String: string): Uint8Array {
@@ -448,14 +500,6 @@ export default function Notification({
     console.log("🔔 通知コンポーネントを初期化します");
     console.log("===============================================");
 
-    requestNotificationPermission();
-
-    // Service Workerの登録（スマホでバックグラウンド通知に対応するため）
-    registerServiceWorker().then(() => {
-      // ServiceWorkerの登録後にバックグラウンド同期を設定
-      requestBackgroundSync();
-    });
-
     // Audio要素を作成
     const audio = new Audio(
       "/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav"
@@ -463,66 +507,86 @@ export default function Notification({
     audio.preload = "auto"; // 事前に読み込み
     audioRef.current = audio;
 
-    // ローカルストレージから通知スケジュールを読み込み
-    try {
-      const schedulesJson =
-        localStorage.getItem("notificationSchedules") || "[]";
-      const schedules = JSON.parse(schedulesJson);
+    // 初期化処理は一度だけ実行
+    const initialized = localStorage.getItem("notification_initialized");
+    const now = new Date().getTime();
 
-      if (schedules.length > 0) {
-        console.log(
-          `保存された${schedules.length}件の通知スケジュールを読み込みました`
-        );
+    // 前回の初期化から1分以上経過している場合のみ実行（無限ループ防止）
+    if (!initialized || now - parseInt(initialized) > 60000) {
+      localStorage.setItem("notification_initialized", now.toString());
 
-        // ページが開かれた時点で未来の通知のみを再スケジュール
-        const now = new Date().getTime();
-        schedules.forEach(
-          (schedule: {
-            id: string;
-            name: string;
-            time: string;
-            nextNotification: number;
-            daily: boolean;
-          }) => {
-            // 次の通知時刻が過去の場合は、新しい通知時刻を計算
-            if (schedule.nextNotification < now) {
-              // 時刻を解析
-              const [hours, minutes] = schedule.time.split(":").map(Number);
-              const nextDate = new Date();
-              nextDate.setHours(hours, minutes, 0, 0);
+      requestNotificationPermission();
 
-              // 今日の指定時刻がすでに過ぎている場合は明日にスケジュール
-              if (nextDate.getTime() < now) {
-                nextDate.setDate(nextDate.getDate() + 1);
+      // Service Workerの登録（スマホでバックグラウンド通知に対応するため）
+      registerServiceWorker().then(() => {
+        // ServiceWorkerの登録後にバックグラウンド同期を設定
+        requestBackgroundSync();
+      });
+
+      // ローカルストレージから通知スケジュールを読み込み
+      try {
+        const schedulesJson =
+          localStorage.getItem("notificationSchedules") || "[]";
+        const schedules = JSON.parse(schedulesJson);
+
+        if (schedules.length > 0) {
+          console.log(
+            `保存された${schedules.length}件の通知スケジュールを読み込みました`
+          );
+
+          // ページが開かれた時点で未来の通知のみを再スケジュール
+          const now = new Date().getTime();
+          schedules.forEach(
+            (schedule: {
+              id: string;
+              name: string;
+              time: string;
+              nextNotification: number;
+              daily: boolean;
+            }) => {
+              // 次の通知時刻が過去の場合は、新しい通知時刻を計算
+              if (schedule.nextNotification < now) {
+                // 時刻を解析
+                const [hours, minutes] = schedule.time.split(":").map(Number);
+                const nextDate = new Date();
+                nextDate.setHours(hours, minutes, 0, 0);
+
+                // 今日の指定時刻がすでに過ぎている場合は明日にスケジュール
+                if (nextDate.getTime() < now) {
+                  nextDate.setDate(nextDate.getDate() + 1);
+                }
+
+                schedule.nextNotification = nextDate.getTime();
               }
 
-              schedule.nextNotification = nextDate.getTime();
+              // 通知時刻までの待機時間
+              const waitTime = schedule.nextNotification - now;
+
+              // 薬の情報から通知を再スケジュール
+              console.log(
+                `保存されたスケジュールから ${schedule.name} の通知を ${waitTime}ms 後に再設定します`
+              );
+
+              // 同じ薬に対する通知が多数発生しないように制限を設ける
+              if (waitTime > 0 && waitTime < 24 * 60 * 60 * 1000) {
+                setTimeout(() => {
+                  // 該当する薬を現在のリストから探す
+                  const medicine = medicines.find((m) => m.id === schedule.id);
+                  if (medicine && !medicine.taken) {
+                    // 見つかった場合は通知を表示
+                    console.log(
+                      `保存されたスケジュールから ${schedule.name} の通知時間になりました`
+                    );
+                    showNotificationAlert(medicine);
+                  }
+                }, waitTime);
+              }
             }
-
-            // 通知時刻までの待機時間
-            const waitTime = schedule.nextNotification - now;
-
-            // 薬の情報から通知を再スケジュール
-            console.log(
-              `保存されたスケジュールから ${schedule.name} の通知を ${waitTime}ms 後に再設定します`
-            );
-
-            setTimeout(() => {
-              // 該当する薬を現在のリストから探す
-              const medicine = medicines.find((m) => m.id === schedule.id);
-              if (medicine && !medicine.taken) {
-                // 見つかった場合は通知を表示
-                console.log(
-                  `保存されたスケジュールから ${schedule.name} の通知時間になりました`
-                );
-                showNotificationAlert(medicine);
-              }
-            }, waitTime);
-          }
-        );
+          );
+        }
+      } catch (error) {
+        console.error("保存された通知スケジュールの読み込みに失敗:", error);
       }
-    } catch (error) {
-      console.error("保存された通知スケジュールの読み込みに失敗:", error);
     }
 
     // ServiceWorkerを定期的に起こして通知をチェック（バックグラウンドでも動作させるため）
@@ -787,13 +851,31 @@ export default function Notification({
               "Notification" in window &&
               notificationPermission === "granted"
             ) {
-              // リマインダー通知を表示
-              new window.Notification("お薬を飲み忘れていませんか？", {
-                body: `${notificationMedicine.name}をまだ飲んでいないようです`,
-                icon: "/icon/favicon.ico", // アイコンを追加
-                requireInteraction: true, // ユーザーの操作があるまで通知を表示し続ける
-                tag: `medicine-reminder-${notificationMedicine.id}`, // 同じタグの通知は上書きされる
-              });
+              // Service Workerを通じてリマインダー通知を表示
+              if (
+                navigator.serviceWorker &&
+                navigator.serviceWorker.controller
+              ) {
+                navigator.serviceWorker.controller.postMessage({
+                  type: "SCHEDULE_NOTIFICATION",
+                  medicine: {
+                    id: notificationMedicine.id,
+                    name: `${notificationMedicine.name}（リマインダー）`,
+                    tag: `medicine-reminder-${notificationMedicine.id}`,
+                  },
+                });
+                console.log(
+                  `${notificationMedicine.name}のリマインダー通知をService Workerに依頼しました`
+                );
+              } else {
+                // フォールバックとして直接リマインダー通知を表示
+                new window.Notification("お薬を飲み忘れていませんか？", {
+                  body: `${notificationMedicine.name}をまだ飲んでいないようです`,
+                  icon: "/icon/favicon.ico", // アイコンを追加
+                  requireInteraction: true, // ユーザーの操作があるまで通知を表示し続ける
+                  tag: `medicine-reminder-${notificationMedicine.id}`, // 同じタグの通知は上書きされる
+                });
+              }
 
               // リマインダー通知の音声も再生
               playNotificationSound();
@@ -814,6 +896,57 @@ export default function Notification({
     notificationPermission,
     playNotificationSound,
   ]);
+
+  // Service Workerからのメッセージを処理するリスナーを設定
+  useEffect(() => {
+    // Service Workerからのメッセージを処理する関数
+    const handleServiceWorkerMessage = (event: MessageEvent) => {
+      console.log("Service Workerからメッセージを受信:", event.data);
+
+      if (event.data && event.data.type === "PLAY_NOTIFICATION_SOUND") {
+        // 通知音を再生
+        playNotificationSound();
+
+        // medicineIdが指定されている場合は対応する薬の通知を表示
+        if (event.data.medicineId) {
+          const medicine = medicines.find(
+            (m) => m.id === event.data.medicineId
+          );
+          if (medicine) {
+            setNotificationMedicine(medicine);
+            setShowNotification(true);
+          }
+        }
+      }
+
+      if (event.data && event.data.type === "DEBUG_RESPONSE") {
+        console.log(
+          "Service Workerからデバッグレスポンス:",
+          event.data.message
+        );
+      }
+    };
+
+    // Service Workerからのメッセージリスナーを登録
+    if (navigator.serviceWorker) {
+      navigator.serviceWorker.addEventListener(
+        "message",
+        handleServiceWorkerMessage
+      );
+      console.log("Service Workerメッセージリスナーを登録しました");
+    }
+
+    // クリーンアップ関数
+    return () => {
+      if (navigator.serviceWorker) {
+        navigator.serviceWorker.removeEventListener(
+          "message",
+          handleServiceWorkerMessage
+        );
+        console.log("Service Workerメッセージリスナーを削除しました");
+      }
+    };
+  }, [medicines, playNotificationSound]);
 
   if (!showNotification || !notificationMedicine) return null;
 
