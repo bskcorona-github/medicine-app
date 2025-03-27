@@ -31,9 +31,33 @@ export default function Home() {
   // 通知音を再生する関数
   const playNotificationSound = useCallback(() => {
     if (audioRef.current) {
+      // 念のため現在のAudioをチェック
+      if (audioRef.current.error) {
+        console.log(
+          "エラー状態のオーディオを検出したため、新しいインスタンスを作成します"
+        );
+        const timestamp = new Date().getTime();
+        const newAudio = new Audio(
+          `/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav?t=${timestamp}`
+        );
+        newAudio.preload = "auto";
+        audioRef.current = newAudio;
+      }
+
       audioRef.current.currentTime = 0;
       audioRef.current.play().catch((error) => {
         console.error("音声再生に失敗しました:", error);
+
+        // 再生に失敗した場合は新しいインスタンスで再試行
+        setTimeout(() => {
+          const timestamp = new Date().getTime();
+          const retryAudio = new Audio(
+            `/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav?t=${timestamp}`
+          );
+          retryAudio.play().catch((e) => {
+            console.error("再試行時も音声再生に失敗:", e);
+          });
+        }, 500);
       });
     }
   }, []);
@@ -232,12 +256,27 @@ export default function Home() {
 
   // Service Workerからのメッセージを受信する
   useEffect(() => {
-    // Audio要素の作成と事前読み込み
+    // Audio要素の作成と事前読み込み（キャッシュバスティングを追加）
+    const timestamp = new Date().getTime();
     const audio = new Audio(
-      "/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav"
+      `/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav?t=${timestamp}`
     );
     audio.preload = "auto"; // 事前に読み込み
     audioRef.current = audio;
+
+    // 音声読み込みエラーのハンドリングを追加
+    audio.addEventListener("error", (e) => {
+      console.error("音声読み込みエラー:", e);
+      // エラー発生時に再試行
+      setTimeout(() => {
+        const newTimestamp = new Date().getTime();
+        const retryAudio = new Audio(
+          `/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav?t=${newTimestamp}`
+        );
+        retryAudio.preload = "auto";
+        audioRef.current = retryAudio;
+      }, 1000);
+    });
 
     // 一度再生して許可を得る（自動再生ポリシー対策）
     const initAudio = () => {
