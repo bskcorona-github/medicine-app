@@ -3,7 +3,14 @@
 const CACHE_NAME = "medicine-reminder-v2";
 
 // キャッシュするファイル（相対パスに修正）
-const urlsToCache = ["./", "./index.html", "./favicon.ico"];
+const urlsToCache = [
+  "./",
+  "./index.html",
+  "./icon/favicon.ico",
+  "./icon/android-chrome-192x192.png",
+  "./icon/android-chrome-512x512.png",
+  "./icon/apple-icon.png",
+];
 
 // 通知スケジュールを保存する変数
 let notificationSchedules = [];
@@ -324,8 +331,8 @@ self.addEventListener("push", (event) => {
   const title = notificationData.title || "お薬の時間です";
   const options = {
     body: notificationData.message || "お薬を飲む時間になりました",
-    icon: "/favicon.ico",
-    badge: "/favicon.ico",
+    icon: "/icon/favicon.ico",
+    badge: "/icon/favicon.ico",
     vibrate: [200, 100, 200],
     tag: notificationData.tag || "medicine-reminder",
     requireInteraction: true, // ユーザーが操作するまで通知を表示し続ける
@@ -491,8 +498,8 @@ self.addEventListener("message", (event) => {
     self.registration
       .showNotification("お薬の時間です", {
         body: `${medicine.name}を服用する時間です`,
-        icon: "/favicon.ico",
-        badge: "/favicon.ico",
+        icon: "/icon/favicon.ico",
+        badge: "/icon/favicon.ico",
         vibrate: [200, 100, 200],
         tag: medicine.tag || `medicine-${medicine.id}`,
         requireInteraction: true,
@@ -590,8 +597,8 @@ async function showNotificationForMedicine(schedule) {
     // 通知を表示
     await self.registration.showNotification("お薬の時間です", {
       body: `${schedule.name}を服用する時間です`,
-      icon: "/favicon.ico",
-      badge: "/favicon.ico",
+      icon: "/icon/favicon.ico",
+      badge: "/icon/favicon.ico",
       vibrate: [200, 100, 200],
       tag: `medicine-${schedule.id}`,
       requireInteraction: true,

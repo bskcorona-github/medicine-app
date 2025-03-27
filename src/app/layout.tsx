@@ -21,6 +21,10 @@ export const metadata: Metadata = {
     statusBarStyle: "default",
     title: "おくすりリマインダー",
   },
+  icons: {
+    icon: "/icon/favicon.ico",
+    apple: "/icon/apple-icon.png",
+  },
 };
 
 export const viewport: Viewport = {
@@ -39,8 +43,9 @@ export default function RootLayout({
   return (
     <html lang="ja">
       <head>
-        <meta name="theme-color" content="#3b82f6" />
-        <link rel="apple-touch-icon" href="/icon-192x192.png"></link>
+        <meta name="theme-color" content="#d16333" />
+        <link rel="apple-touch-icon" href="/icon/apple-icon.png"></link>
+        <link rel="icon" href="/icon/favicon.ico"></link>
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}

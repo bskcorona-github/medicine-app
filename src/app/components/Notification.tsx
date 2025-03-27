@@ -167,7 +167,7 @@ export default function Notification({
           // ブラウザ通知を表示
           new window.Notification("お薬の時間です", {
             body: `${medicine.name}を服用する時間です`,
-            icon: "/favicon.ico", // アイコンを追加して目立たせる
+            icon: "/icon/favicon.ico", // アイコンを追加して目立たせる
             tag: `medicine-${medicine.id}`, // 同じタグの通知は上書きされる
             requireInteraction: true, // ユーザーがアクションを起こすまで通知を表示したままにする
           });
@@ -731,7 +731,7 @@ export default function Notification({
               // リマインダー通知を表示
               new window.Notification("お薬を飲み忘れていませんか？", {
                 body: `${notificationMedicine.name}をまだ飲んでいないようです`,
-                icon: "/favicon.ico", // アイコンを追加
+                icon: "/icon/favicon.ico", // アイコンを追加
                 requireInteraction: true, // ユーザーの操作があるまで通知を表示し続ける
                 tag: `medicine-reminder-${notificationMedicine.id}`, // 同じタグの通知は上書きされる
               });
