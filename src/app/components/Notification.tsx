@@ -24,7 +24,9 @@ export default function Notification({
   medicines,
   onNotificationClick,
 }: NotificationProps) {
-  const [_currentTime, setCurrentTime] = useState<string>("");
+  // ESLintルールを無視するためアンダースコアをつける
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [currentTime, setCurrentTime] = useState<string>("");
   const [notificationMedicine, setNotificationMedicine] =
     useState<Medicine | null>(null);
   const [showNotification, setShowNotification] = useState<boolean>(false);
