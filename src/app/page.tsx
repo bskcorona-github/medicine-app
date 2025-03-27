@@ -70,6 +70,8 @@ export default function Home() {
       const id = urlParams.get("id");
       const notification = urlParams.get("notification");
 
+      console.log("URLパラメータを検出:", { action, id, notification });
+
       // 通知から「服用しました」ボタンがクリックされた場合
       if (action === "taken" && id) {
         // medicine-{id} または medicine-reminder-{id} から id を抽出
@@ -77,6 +79,7 @@ export default function Home() {
 
         // 該当の薬を服用済みにする
         if (medicineId) {
+          console.log("服用済みアクションを実行します:", medicineId);
           handleTakeMedicine(medicineId);
 
           // URLパラメータをクリア
@@ -90,7 +93,12 @@ export default function Home() {
 
       // 通知音を再生する場合
       if (notification === "sound") {
-        playNotificationSound();
+        console.log("通知音を再生します");
+        // モバイルでの自動再生制限に対応するため遅延させる
+        setTimeout(() => {
+          playNotificationSound();
+        }, 1000);
+
         // URLパラメータをクリア
         window.history.replaceState(
           {},
@@ -103,11 +111,40 @@ export default function Home() {
 
   // Service Workerからのメッセージを受信する
   useEffect(() => {
-    // 音声要素の作成
+    // Audio要素の作成と事前読み込み
     const audio = new Audio(
       "/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav"
     );
+    audio.preload = "auto"; // 事前に読み込み
     audioRef.current = audio;
+
+    // 一度再生して許可を得る（自動再生ポリシー対策）
+    const initAudio = () => {
+      // ユーザーの操作があった時のみ実行
+      document.addEventListener(
+        "click",
+        function initAudioOnUserAction() {
+          if (audioRef.current) {
+            audioRef.current.volume = 0; // 無音で再生
+            audioRef.current
+              .play()
+              .then(() => {
+                audioRef.current!.pause();
+                audioRef.current!.volume = 1; // 元の音量に戻す
+                console.log("音声の初期化が完了しました");
+              })
+              .catch((error) => {
+                console.error("音声の初期化に失敗しました:", error);
+              });
+          }
+          // 一度だけ実行したいので、リスナーを削除
+          document.removeEventListener("click", initAudioOnUserAction);
+        },
+        { once: true }
+      );
+    };
+
+    initAudio();
 
     // Service Workerからのメッセージリスナー
     const handleServiceWorkerMessage = (event: MessageEvent) => {
@@ -133,18 +170,30 @@ export default function Home() {
       }
     };
 
-    // メッセージリスナーを登録
-    navigator.serviceWorker.addEventListener(
-      "message",
-      handleServiceWorkerMessage
-    );
+    // Service Workerが有効かどうかをチェック
+    if ("serviceWorker" in navigator) {
+      // Service Workerの登録状態を確認
+      navigator.serviceWorker.ready.then((registration) => {
+        console.log("Service Worker is ready:", registration.scope);
+      });
 
-    // クリーンアップ関数
-    return () => {
-      navigator.serviceWorker.removeEventListener(
+      // メッセージリスナーを登録
+      navigator.serviceWorker.addEventListener(
         "message",
         handleServiceWorkerMessage
       );
+    } else {
+      console.warn("このブラウザはService Workerをサポートしていません");
+    }
+
+    // クリーンアップ関数
+    return () => {
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.removeEventListener(
+          "message",
+          handleServiceWorkerMessage
+        );
+      }
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current = null;

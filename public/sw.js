@@ -133,7 +133,10 @@ self.addEventListener("push", (event) => {
       .then((clients) => {
         if (clients.length === 0) {
           // クライアントがなければ、バックグラウンドで音声を再生するためのメッセージを送信
-          return self.clients.openWindow("/?notification=sound");
+          // スマホでも確実に起動するために、絶対URLを使用
+          const url = self.registration.scope + "?notification=sound";
+          console.log("Service Worker: クライアントを起動します", url);
+          return self.clients.openWindow(url);
         }
 
         // クライアントがある場合はメッセージを送信
@@ -143,6 +146,12 @@ self.addEventListener("push", (event) => {
             medicineId: notificationData.medicineId || "",
           });
         });
+      })
+      .catch((error) => {
+        console.error(
+          "Service Worker: 通知処理中にエラーが発生しました",
+          error
+        );
       })
   );
 });
@@ -171,7 +180,10 @@ self.addEventListener("notificationclick", (event) => {
     // 服用済みのアクションを実行
     console.log("Service Worker: 服用済みアクション", medicineId);
 
-    event.waitUntil(clients.openWindow(`/?action=taken&id=${medicineId}`));
+    // 絶対URLを使用して確実にアプリを開く
+    const url = self.registration.scope + `?action=taken&id=${medicineId}`;
+    console.log("Service Worker: アプリを開きます", url);
+    event.waitUntil(clients.openWindow(url));
   } else {
     // 通知をクリックした場合やその他のアクション
     console.log("Service Worker: 通常クリック");
@@ -193,8 +205,15 @@ self.addEventListener("notificationclick", (event) => {
           // ウィンドウが開いていなければ新しく開く
           if (clients.openWindow) {
             console.log("Service Worker: 新しいウィンドウを開く");
-            return clients.openWindow("/");
+            const url = self.registration.scope;
+            return clients.openWindow(url);
           }
+        })
+        .catch((error) => {
+          console.error(
+            "Service Worker: 通知クリック処理中にエラーが発生しました",
+            error
+          );
         })
     );
   }

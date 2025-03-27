@@ -19,6 +19,12 @@ declare global {
         }
       ): Notification;
     };
+    AudioContext: {
+      new (): AudioContext;
+    };
+    webkitAudioContext: {
+      new (): AudioContext;
+    };
   }
 }
 
@@ -65,6 +71,36 @@ export default function Notification({
       if (audioRef.current) {
         setIsPlaying(true);
         audioRef.current.currentTime = 0;
+
+        // 音量を確認
+        if (audioRef.current.volume === 0) {
+          audioRef.current.volume = 1;
+        }
+
+        // モバイルでの自動再生制限に対応するためユーザーインタラクションを模倣
+        interface AudioContextConstructor {
+          new (): AudioContext;
+        }
+
+        interface Window {
+          AudioContext: AudioContextConstructor;
+          webkitAudioContext: AudioContextConstructor;
+        }
+
+        const AudioContextClass =
+          window.AudioContext || (window as Window).webkitAudioContext;
+        if (AudioContextClass) {
+          const context = new AudioContextClass();
+          context
+            .resume()
+            .then(() => {
+              console.log("AudioContext resumed successfully");
+            })
+            .catch((error) => {
+              console.error("AudioContext resume failed:", error);
+            });
+        }
+
         const playPromise = audioRef.current.play();
 
         if (playPromise !== undefined) {
@@ -82,6 +118,15 @@ export default function Notification({
             .catch((error) => {
               console.error("音声再生に失敗しました:", error);
               setIsPlaying(false);
+
+              // エラーが発生した場合、再度試行
+              setTimeout(() => {
+                if (audioRef.current) {
+                  audioRef.current.play().catch((retryError) => {
+                    console.error("音声再生の再試行に失敗:", retryError);
+                  });
+                }
+              }, 1000);
             });
         }
       }
@@ -146,8 +191,15 @@ export default function Notification({
     if ("serviceWorker" in navigator) {
       try {
         // Service Workerを登録
-        const registration = await navigator.serviceWorker.register("/sw.js");
+        const registration = await navigator.serviceWorker.register("/sw.js", {
+          scope: "/",
+        });
         console.log("Service Worker 登録成功:", registration);
+
+        // サービスワーカーの更新をチェック
+        registration.update().catch((error) => {
+          console.error("Service Worker の更新に失敗:", error);
+        });
 
         // プッシュ通知の許可を求める
         if (registration.pushManager) {
@@ -169,6 +221,8 @@ export default function Notification({
       } catch (error) {
         console.error("Service Worker 登録失敗:", error);
       }
+    } else {
+      console.warn("このブラウザはService Workerをサポートしていません");
     }
   };
 
