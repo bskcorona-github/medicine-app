@@ -74,6 +74,22 @@ export default function Notification({
   // 音声再生中かどうかを追跡
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
 
+  // 通知のデバウンス処理用
+  const lastNotificationRef = useRef<{ time: number; id: string | null }>({
+    time: 0,
+    id: null,
+  });
+  const NOTIFICATION_DEBOUNCE_MS = 3000; // 3秒以内の同一薬の通知は無視
+
+  // メッセージ送信イベントを追跡
+  const messageEventRef = useRef<{
+    lastTime: number;
+    sentMessages: Map<string, number>;
+  }>({
+    lastTime: 0,
+    sentMessages: new Map(),
+  });
+
   // 現在時刻を取得し、形式を"HH:MM"に変換する関数
   const formatCurrentTime = (): string => {
     const now = new Date();
@@ -1089,33 +1105,96 @@ export default function Notification({
     playNotificationSound,
   ]);
 
-  // Service Workerからのメッセージを処理するリスナーを設定
-  useEffect(() => {
-    // Service Workerからのメッセージを処理する関数
-    const handleServiceWorkerMessage = (event: MessageEvent) => {
-      console.log("Service Workerからメッセージを受信:", event.data);
+  // 通知音を再生する処理
+  const handleNotificationForMedicine = useCallback(
+    (medicine: Medicine) => {
+      const now = Date.now();
+      const lastNotification = lastNotificationRef.current;
 
-      if (event.data && event.data.type === "PLAY_NOTIFICATION_SOUND") {
-        // 通知音を再生
-        playNotificationSound();
-
-        // medicineIdが指定されている場合は対応する薬の通知を表示
-        if (event.data.medicineId) {
-          const medicine = medicines.find(
-            (m) => m.id === event.data.medicineId
-          );
-          if (medicine) {
-            setNotificationMedicine(medicine);
-            setShowNotification(true);
-          }
-        }
+      // 同じ薬の通知が短時間に複数回来た場合は無視
+      if (
+        medicine.id === lastNotification.id &&
+        now - lastNotification.time < NOTIFICATION_DEBOUNCE_MS
+      ) {
+        console.log(
+          `${medicine.name}の通知は最近処理済み(${Math.floor(
+            (now - lastNotification.time) / 1000
+          )}秒前)のためスキップします`
+        );
+        return;
       }
 
-      if (event.data && event.data.type === "DEBUG_RESPONSE") {
-        console.log(
-          "Service Workerからデバッグレスポンス:",
-          event.data.message
-        );
+      // 最終通知情報を更新
+      lastNotificationRef.current = {
+        time: now,
+        id: medicine.id,
+      };
+
+      console.log(`${medicine.name}の通知を処理します`);
+      setNotificationMedicine(medicine);
+      setShowNotification(true);
+
+      // 音声を再生
+      playNotificationSound();
+    },
+    [playNotificationSound]
+  );
+
+  // Service Workerからのメッセージを処理
+  useEffect(() => {
+    const handleServiceWorkerMessage = (event: MessageEvent) => {
+      // デバッグ応答をスキップ
+      if (event.data?.type === "DEBUG_RESPONSE") {
+        return;
+      }
+
+      // 通知音再生のリクエスト
+      if (event.data?.type === "PLAY_NOTIFICATION_SOUND") {
+        const now = Date.now();
+        const medicineId = event.data.medicineId;
+
+        // メッセージの重複防止処理
+        const messageKey = `${event.data.type}-${
+          medicineId || "unknown"
+        }-${Math.floor(now / 1000)}`;
+        const lastMessageTime =
+          messageEventRef.current.sentMessages.get(messageKey) || 0;
+
+        if (now - lastMessageTime < NOTIFICATION_DEBOUNCE_MS) {
+          console.log(
+            `重複メッセージを検出しました: ${messageKey} (${
+              now - lastMessageTime
+            }ms)`
+          );
+          return;
+        }
+
+        messageEventRef.current.sentMessages.set(messageKey, now);
+
+        // マップサイズを制限（古いエントリを削除）
+        if (messageEventRef.current.sentMessages.size > 50) {
+          const oldestKey = [
+            ...messageEventRef.current.sentMessages.keys(),
+          ].sort()[0];
+          messageEventRef.current.sentMessages.delete(oldestKey);
+        }
+
+        console.log("Service Workerからの通知要求:", event.data);
+
+        // 特定の薬の通知リクエスト
+        if (medicineId) {
+          // その薬を探す
+          const medicine = medicines.find((m) => m.id === medicineId);
+          if (medicine) {
+            handleNotificationForMedicine(medicine);
+          } else {
+            // medicineが見つからなくても通知音だけは再生
+            playNotificationSound();
+          }
+        } else {
+          // 特定の薬IDがなければ、通知音だけ再生
+          playNotificationSound();
+        }
       }
     };
 
@@ -1138,7 +1217,7 @@ export default function Notification({
         console.log("Service Workerメッセージリスナーを削除しました");
       }
     };
-  }, [medicines, playNotificationSound]);
+  }, [medicines, handleNotificationForMedicine, playNotificationSound]);
 
   if (!showNotification || !notificationMedicine) return null;
 

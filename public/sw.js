@@ -604,22 +604,52 @@ async function checkScheduledNotifications() {
             includeUncontrolled: true,
           });
 
-          // 同じメッセージが複数回送信されないようにセット使用
-          const notifiedClients = new Set();
+          // メッセージ送信時間の記録用オブジェクトを初期化
+          if (!self._lastMessageTimes) {
+            self._lastMessageTimes = {};
+          }
+          const messageKey = `playSound-${medicineId}`;
+          const lastMessageTime = self._lastMessageTimes[messageKey] || 0;
+          const DEBOUNCE_TIME = 2000; // 2秒以内のメッセージは重複して送らない
 
-          clients.forEach((client) => {
-            // 同じクライアントに二度メッセージを送らない
-            const clientId = client.id;
-            if (notifiedClients.has(clientId)) {
-              return;
-            }
+          if (now - lastMessageTime < DEBOUNCE_TIME) {
+            console.log(
+              `Service Worker: ${
+                schedule.name
+              }の通知音メッセージは最近送信済み(${
+                (now - lastMessageTime) / 1000
+              }秒前)です`
+            );
+            return;
+          }
 
-            notifiedClients.add(clientId);
+          // メッセージ送信時間の記録用オブジェクトを初期化
+          if (!self._lastMessageTimes) {
+            self._lastMessageTimes = {};
+          }
+          self._lastMessageTimes[messageKey] = now;
+
+          // クライアントにメッセージを送信
+          const allClients = await clients.matchAll({
+            includeUncontrolled: true,
+          });
+
+          if (allClients.length > 0) {
+            // クライアントが存在する場合は最初の1つだけにメッセージを送信
+            const client = allClients[0];
             client.postMessage({
               type: "PLAY_NOTIFICATION_SOUND",
               medicineId: schedule.id,
+              time: now,
             });
-          });
+            console.log(
+              `Service Worker: ${schedule.name}の通知音メッセージを送信しました (クライアント: ${client.id})`
+            );
+          } else {
+            console.log(
+              "Service Worker: アクティブなクライアントが見つかりません"
+            );
+          }
 
           // 毎日の通知の場合は、次の日の同じ時間に再スケジュール
           if (schedule.daily) {
@@ -701,6 +731,20 @@ async function checkScheduledNotifications() {
 
 // 薬の通知を表示する関数
 async function showNotificationForMedicine(schedule) {
+  // 重複通知防止のため、最後の通知時間をチェック
+  const now = Date.now();
+  const lastNotificationTime = lastNotificationTimes[schedule.id] || 0;
+  const NOTIFICATION_MIN_INTERVAL = 3000; // 3秒以内の同一通知を防止
+
+  if (now - lastNotificationTime < NOTIFICATION_MIN_INTERVAL) {
+    console.log(
+      `Service Worker: ${schedule.name}の通知は最近送信されたため(${
+        (now - lastNotificationTime) / 1000
+      }秒前)、重複を防止します`
+    );
+    return false;
+  }
+
   try {
     // 通知を表示
     await self.registration.showNotification("お薬の時間です", {
@@ -738,6 +782,28 @@ async function showNotificationForMedicine(schedule) {
       includeUncontrolled: true,
     });
 
+    // メッセージ送信の重複防止
+    const DEBOUNCE_TIME = 2000; // 2秒以内のメッセージは重複して送らない
+    const messageKey = `playSound-${schedule.id}`;
+
+    // メッセージ送信時間の記録用オブジェクトを初期化
+    if (!self._lastMessageTimes) {
+      self._lastMessageTimes = {};
+    }
+
+    const lastMessageTime = self._lastMessageTimes[messageKey] || 0;
+    if (now - lastMessageTime < DEBOUNCE_TIME) {
+      console.log(
+        `Service Worker: ${schedule.name}の通知音メッセージは最近送信済み(${
+          (now - lastMessageTime) / 1000
+        }秒前)です`
+      );
+      return true;
+    }
+
+    // 最新の送信時間を記録
+    self._lastMessageTimes[messageKey] = now;
+
     // クライアントが存在しない場合（アプリが閉じている場合）
     if (clients.length === 0) {
       console.log(
@@ -754,6 +820,17 @@ async function showNotificationForMedicine(schedule) {
       } catch (error) {
         console.error("Service Worker: クライアント起動エラー", error);
       }
+    } else {
+      // クライアントが存在する場合は最初の1つだけにメッセージを送信
+      const client = clients[0];
+      client.postMessage({
+        type: "PLAY_NOTIFICATION_SOUND",
+        medicineId: schedule.id,
+        time: now,
+      });
+      console.log(
+        `Service Worker: ${schedule.name}の通知音メッセージを送信しました (クライアント: ${client.id})`
+      );
     }
 
     return true;
@@ -768,6 +845,23 @@ async function showNotificationForMedicine(schedule) {
 
 // 通知を表示する関数
 async function showNotification(medicine) {
+  // 重複通知防止のため、最後の通知時間をチェック
+  const now = Date.now();
+  const lastNotificationTime = lastNotificationTimes[medicine.id] || 0;
+  const NOTIFICATION_MIN_INTERVAL = 3000; // 3秒以内の同一通知を防止
+
+  if (now - lastNotificationTime < NOTIFICATION_MIN_INTERVAL) {
+    console.log(
+      `Service Worker: ${medicine.name}の通知は最近送信されたため(${
+        (now - lastNotificationTime) / 1000
+      }秒前)、重複を防止します`
+    );
+    return;
+  }
+
+  // 最後の通知時間を更新
+  lastNotificationTimes[medicine.id] = now;
+
   try {
     // 通知を表示
     await self.registration.showNotification("お薬の時間です", {
@@ -797,14 +891,45 @@ async function showNotification(medicine) {
 
     console.log(`Service Worker: ${medicine.name}の通知を表示しました`);
 
-    // メインスレッドに通知音を鳴らすようにメッセージを送信
+    // メッセージ送信の重複防止
+    const DEBOUNCE_TIME = 2000; // 2秒以内のメッセージは重複して送らない
+    const messageKey = `playSound-${medicine.id}`;
+
+    // メッセージ送信時間の記録用オブジェクトを初期化
+    if (!self._lastMessageTimes) {
+      self._lastMessageTimes = {};
+    }
+
+    const lastMessageTime = self._lastMessageTimes[messageKey] || 0;
+    if (now - lastMessageTime < DEBOUNCE_TIME) {
+      console.log(
+        `Service Worker: ${medicine.name}の通知音メッセージは最近送信済み(${
+          (now - lastMessageTime) / 1000
+        }秒前)です`
+      );
+      return;
+    }
+
+    // 最新の送信時間を記録
+    self._lastMessageTimes[messageKey] = now;
+
+    // クライアントにメッセージを送信
     const allClients = await clients.matchAll({ includeUncontrolled: true });
-    allClients.forEach((client) => {
+
+    if (allClients.length > 0) {
+      // クライアントが存在する場合は最初の1つだけにメッセージを送信
+      const client = allClients[0];
       client.postMessage({
         type: "PLAY_NOTIFICATION_SOUND",
         medicineId: medicine.id,
+        time: now,
       });
-    });
+      console.log(
+        `Service Worker: ${medicine.name}の通知音メッセージを送信しました (クライアント: ${client.id})`
+      );
+    } else {
+      console.log("Service Worker: アクティブなクライアントが見つかりません");
+    }
   } catch (error) {
     console.error("Service Worker: 通知表示エラー", error);
   }
