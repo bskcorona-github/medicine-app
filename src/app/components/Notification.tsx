@@ -39,10 +39,13 @@ export default function Notification({
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // useSound hookを使用（バックアップ）
-  const [play] = useSound("/sounds/notification.mp3", {
-    volume: 1.0,
-    interrupt: true, // 再生中でも新しい通知音で中断
-  });
+  const [play] = useSound(
+    "/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav",
+    {
+      volume: 1.0,
+      interrupt: true, // 再生中でも新しい通知音で中断
+    }
+  );
 
   // 現在時刻を取得し、形式を"HH:MM"に変換する関数
   const formatCurrentTime = (): string => {
@@ -121,7 +124,9 @@ export default function Notification({
     requestNotificationPermission();
 
     // Audio要素を作成
-    const audio = new Audio("/sounds/notification.mp3");
+    const audio = new Audio(
+      "/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav"
+    );
     audio.preload = "auto"; // 事前に読み込み
     audioRef.current = audio;
 
@@ -229,7 +234,7 @@ export default function Notification({
       {/* 非表示音声要素 */}
       <audio
         id="notification-sound"
-        src="/sounds/notification.mp3"
+        src="/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav"
         preload="auto"
       />
 
