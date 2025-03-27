@@ -25,7 +25,7 @@ declare global {
     webkitAudioContext: {
       new (): AudioContext;
     };
-    SyncManager: any; // バックグラウンド同期用
+    SyncManager: unknown; // バックグラウンド同期用
   }
 
   interface ServiceWorkerRegistration {
