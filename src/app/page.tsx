@@ -48,7 +48,7 @@ export default function Home() {
         );
         const timestamp = new Date().getTime();
         const newAudio = new Audio(
-          `/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav?t=${timestamp}`
+          `/sounds/001_zundamon_okusuri.wav?t=${timestamp}`
         );
         newAudio.preload = "auto";
         audioRef.current = newAudio;
@@ -72,7 +72,7 @@ export default function Home() {
         setTimeout(() => {
           const timestamp = new Date().getTime();
           const retryAudio = new Audio(
-            `/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav?t=${timestamp}`
+            `/sounds/001_zundamon_okusuri.wav?t=${timestamp}`
           );
 
           // 再生終了時のイベントリスナーを追加
@@ -288,9 +288,7 @@ export default function Home() {
   useEffect(() => {
     // Audio要素の作成と事前読み込み（キャッシュバスティングを追加）
     const timestamp = new Date().getTime();
-    const audio = new Audio(
-      `/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav?t=${timestamp}`
-    );
+    const audio = new Audio(`/sounds/001_zundamon_okusuri.wav?t=${timestamp}`);
     audio.preload = "auto"; // 事前に読み込み
     audioRef.current = audio;
 
@@ -301,7 +299,7 @@ export default function Home() {
       setTimeout(() => {
         const newTimestamp = new Date().getTime();
         const retryAudio = new Audio(
-          `/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav?t=${newTimestamp}`
+          `/sounds/001_zundamon_okusuri.wav?t=${newTimestamp}`
         );
         retryAudio.preload = "auto";
         audioRef.current = retryAudio;

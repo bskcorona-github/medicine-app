@@ -29,8 +29,7 @@ let lastGlobalNotifications = {
 let faviconCached = false;
 
 // 音声ファイルのパス
-const SOUND_FILE_PATH =
-  "/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav";
+const SOUND_FILE_PATH = "/sounds/001_zundamon_okusuri.wav";
 
 // グローバルな通知デバウンス値
 const NOTIFICATION_DEBOUNCE_MS = 5000; // 5秒 - グローバル通知間隔

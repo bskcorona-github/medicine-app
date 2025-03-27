@@ -152,7 +152,7 @@ export default function Notification({
 
       // 新しいAudio要素を作成（メモリリークを防ぐため、使い捨てにする）
       const tempAudio = new Audio(
-        `/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav?t=${timestamp}`
+        `/sounds/001_zundamon_okusuri.wav?t=${timestamp}`
       );
 
       // 既存のオーディオがあれば解放
@@ -195,9 +195,7 @@ export default function Notification({
         setIsPlaying(false);
 
         // 代替方法を試す - fetch APIでファイルの存在確認
-        fetch(
-          `/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav?t=${timestamp}`
-        )
+        fetch(`/sounds/001_zundamon_okusuri.wav?t=${timestamp}`)
           .then((response) => {
             if (response.ok) {
               console.log(
@@ -206,7 +204,7 @@ export default function Notification({
 
               // 新しいAudio要素で再試行
               const alternativeAudio = new Audio();
-              alternativeAudio.src = `/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav?t=${timestamp}`;
+              alternativeAudio.src = `/sounds/001_zundamon_okusuri.wav?t=${timestamp}`;
               alternativeAudio.volume = 1.0;
               alternativeAudio.play().catch((err) => {
                 console.warn("代替方法でも音声再生に失敗:", err);
@@ -727,9 +725,7 @@ export default function Notification({
     console.log("===============================================");
 
     // Audio要素を作成
-    const audio = new Audio(
-      "/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav"
-    );
+    const audio = new Audio("/sounds/001_zundamon_okusuri.wav");
     audio.preload = "auto"; // 事前に読み込み
     audioRef.current = audio;
 
