@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { v4 as uuidv4 } from "uuid";
 import MedicineForm, { MedicineFormData } from "./components/MedicineForm";
 import MedicineList, { Medicine } from "./components/MedicineList";
@@ -29,17 +29,17 @@ export default function Home() {
   }, [medicines]);
 
   // 通知音を再生する関数
-  const playNotificationSound = () => {
+  const playNotificationSound = useCallback(() => {
     if (audioRef.current) {
       audioRef.current.currentTime = 0;
       audioRef.current.play().catch((error) => {
         console.error("音声再生に失敗しました:", error);
       });
     }
-  };
+  }, []);
 
   // 新しい薬を追加
-  const handleAddMedicine = (data: MedicineFormData) => {
+  const handleAddMedicine = useCallback((data: MedicineFormData) => {
     const newMedicine: Medicine = {
       id: uuidv4(),
       name: data.medicineName,
@@ -47,61 +47,64 @@ export default function Home() {
       taken: false,
       daily: data.daily,
     };
-    setMedicines([...medicines, newMedicine]);
-  };
+    setMedicines((prev) => [...prev, newMedicine]);
+  }, []);
 
   // 薬を服用済みにする
-  const handleTakeMedicine = (id: string) => {
-    setMedicines(
-      medicines.map((medicine) =>
+  const handleTakeMedicine = useCallback((id: string) => {
+    setMedicines((prev) =>
+      prev.map((medicine) =>
         medicine.id === id ? { ...medicine, taken: true } : medicine
       )
     );
-  };
+  }, []);
 
   // 薬を削除する
-  const handleDeleteMedicine = (id: string) => {
-    setMedicines(medicines.filter((medicine) => medicine.id !== id));
-  };
+  const handleDeleteMedicine = useCallback((id: string) => {
+    setMedicines((prev) => prev.filter((medicine) => medicine.id !== id));
+  }, []);
 
   // すべての薬を削除する
-  const handleDeleteAllMedicines = () => {
+  const handleDeleteAllMedicines = useCallback(() => {
     if (window.confirm("すべてのお薬を削除してもよろしいですか？")) {
       setMedicines([]);
     }
-  };
+  }, []);
 
   // 薬の編集モードを開始
-  const handleEditMedicine = (medicine: Medicine) => {
+  const handleEditMedicine = useCallback((medicine: Medicine) => {
     setEditingMedicine(medicine);
     // フォームが見えるようにスクロール
     window.scrollTo({
       top: 0,
       behavior: "smooth",
     });
-  };
+  }, []);
 
   // 薬を更新する
-  const handleUpdateMedicine = (id: string, data: MedicineFormData) => {
-    setMedicines(
-      medicines.map((medicine) =>
-        medicine.id === id
-          ? {
-              ...medicine,
-              name: data.medicineName,
-              time: data.time,
-              daily: data.daily,
-            }
-          : medicine
-      )
-    );
-    setEditingMedicine(null);
-  };
+  const handleUpdateMedicine = useCallback(
+    (id: string, data: MedicineFormData) => {
+      setMedicines((prev) =>
+        prev.map((medicine) =>
+          medicine.id === id
+            ? {
+                ...medicine,
+                name: data.medicineName,
+                time: data.time,
+                daily: data.daily,
+              }
+            : medicine
+        )
+      );
+      setEditingMedicine(null);
+    },
+    []
+  );
 
   // 編集をキャンセル
-  const handleCancelEdit = () => {
+  const handleCancelEdit = useCallback(() => {
     setEditingMedicine(null);
-  };
+  }, []);
 
   // URLパラメータから通知アクションを処理
   useEffect(() => {

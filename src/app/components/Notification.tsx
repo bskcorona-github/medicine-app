@@ -63,7 +63,7 @@ export default function Notification({
   };
 
   // 音声を再生する関数
-  const playNotificationSound = () => {
+  const playNotificationSound = useCallback(() => {
     // 既に再生中なら再生しない
     if (isPlaying) return;
 
@@ -134,36 +134,39 @@ export default function Notification({
       console.error("音声再生中にエラーが発生しました:", error);
       setIsPlaying(false);
     }
-  };
+  }, [isPlaying]);
 
   // 通知を表示する関数
-  const showNotificationAlert = (medicine: Medicine) => {
-    // アプリ内通知を表示
-    setNotificationMedicine(medicine);
-    setShowNotification(true);
+  const showNotificationAlert = useCallback(
+    (medicine: Medicine) => {
+      // アプリ内通知を表示
+      setNotificationMedicine(medicine);
+      setShowNotification(true);
 
-    // 音声通知を再生
-    playNotificationSound();
+      // 音声通知を再生
+      playNotificationSound();
 
-    // ブラウザ通知を試行
-    try {
-      if (
-        typeof window !== "undefined" &&
-        "Notification" in window &&
-        notificationPermission === "granted"
-      ) {
-        // @ts-expect-error - Notificationコンストラクタの使用
-        new window.Notification("お薬の時間です", {
-          body: `${medicine.name}を服用する時間です`,
-          icon: "/favicon.ico", // アイコンを追加して目立たせる
-          tag: `medicine-${medicine.id}`, // 同じタグの通知は上書きされる
-          requireInteraction: true, // ユーザーがアクションを起こすまで通知を表示したままにする
-        });
+      // ブラウザ通知を試行
+      try {
+        if (
+          typeof window !== "undefined" &&
+          "Notification" in window &&
+          notificationPermission === "granted"
+        ) {
+          // ブラウザ通知を表示
+          new window.Notification("お薬の時間です", {
+            body: `${medicine.name}を服用する時間です`,
+            icon: "/favicon.ico", // アイコンを追加して目立たせる
+            tag: `medicine-${medicine.id}`, // 同じタグの通知は上書きされる
+            requireInteraction: true, // ユーザーがアクションを起こすまで通知を表示したままにする
+          });
+        }
+      } catch (error) {
+        console.error("ブラウザ通知の表示に失敗しました:", error);
       }
-    } catch (error) {
-      console.error("ブラウザ通知の表示に失敗しました:", error);
-    }
-  };
+    },
+    [notificationPermission, playNotificationSound]
+  );
 
   // 通知の許可をリクエストする関数
   const requestNotificationPermission = async () => {
@@ -198,7 +201,7 @@ export default function Notification({
             error
           );
           try {
-            // @ts-expect-error - レガシーブラウザのためのフォールバック
+            // レガシーブラウザのためのフォールバック
             window.Notification.requestPermission(function (result) {
               console.log("通知許可リクエスト結果(コールバック):", result);
               setNotificationPermission(result);
@@ -217,7 +220,7 @@ export default function Notification({
   };
 
   // Service Workerを登録する関数
-  const registerServiceWorker = async () => {
+  const registerServiceWorker = useCallback(async () => {
     if ("serviceWorker" in navigator) {
       try {
         // Service Workerを登録
@@ -305,7 +308,7 @@ export default function Notification({
     } else {
       console.warn("このブラウザはService Workerをサポートしていません");
     }
-  };
+  }, [notificationPermission]);
 
   // base64文字列をUint8Arrayに変換する関数
   function urlBase64ToUint8Array(base64String: string): Uint8Array {
