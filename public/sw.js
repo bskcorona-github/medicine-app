@@ -74,9 +74,45 @@ function setPeriodicNotificationCheck() {
   // 通知スケジュールを1分ごとにチェック
   setInterval(checkScheduledNotifications, 60000);
 
+  // スマホでもバックグラウンドで動作し続けるために、定期的にwakeupイベントを発生させる
+  if ("periodicSync" in self.registration) {
+    // Periodic Background Sync APIが利用可能な場合
+    try {
+      self.registration.periodicSync
+        .register("notification-sync", {
+          minInterval: 60 * 1000, // 最小間隔は1分
+        })
+        .then(() => {
+          console.log("Service Worker: 定期的同期を登録しました");
+        });
+    } catch (error) {
+      console.error("Service Worker: 定期的同期の登録に失敗しました", error);
+    }
+  } else {
+    console.log(
+      "Service Worker: 定期的同期APIがサポートされていません、代替手段を使用します"
+    );
+  }
+
   // 初回チェック
   checkScheduledNotifications();
 }
+
+// 定期的同期イベントのリスナーを追加
+self.addEventListener("periodicsync", (event) => {
+  if (event.tag === "notification-sync") {
+    console.log("Service Worker: 定期的同期イベントを受信");
+    event.waitUntil(checkScheduledNotifications());
+  }
+});
+
+// push通知の購読がなくても定期的にwakeupできるようにする
+self.addEventListener("sync", (event) => {
+  if (event.tag === "notification-check") {
+    console.log("Service Worker: 同期イベントを受信");
+    event.waitUntil(checkScheduledNotifications());
+  }
+});
 
 // IndexedDBから通知スケジュールを読み込む
 function loadSchedulesFromIndexedDB() {
@@ -236,6 +272,9 @@ function checkScheduledNotifications() {
 
   // 通知を順番に表示
   notificationsToShow.forEach((schedule) => {
+    // アプリが閉じられていても通知を確実に表示するためのログ
+    console.log(`Service Worker: 通知を表示 - ${schedule.name}`);
+
     self.registration.showNotification("お薬の時間です", {
       body: `${schedule.name}を服用する時間です`,
       icon: "/favicon.ico",
@@ -256,6 +295,32 @@ function checkScheduledNotifications() {
         },
       ],
     });
+
+    // スマホでアプリがバックグラウンドや閉じられている場合でも通知を確実に表示するため
+    // アプリを開くURLをコンソールに表示（デバッグ用）
+    console.log(
+      `Service Worker: 通知URL - ${self.registration.scope}?notification=medicine&id=${schedule.id}`
+    );
+
+    // スマホで閉じている場合はアプリを起動する試み（条件によって効果が異なる）
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((clients) => {
+        // クライアントが存在しない場合（アプリが閉じている場合）
+        if (clients.length === 0) {
+          console.log(
+            "Service Worker: クライアントが見つかりません、新しいウィンドウを開きます"
+          );
+
+          // アプリを起動する試み
+          return self.clients.openWindow(
+            `${self.registration.scope}?notification=medicine&id=${schedule.id}`
+          );
+        }
+      })
+      .catch((error) => {
+        console.error("Service Worker: クライアント処理エラー", error);
+      });
   });
 }
 

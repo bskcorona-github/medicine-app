@@ -25,6 +25,17 @@ declare global {
     webkitAudioContext: {
       new (): AudioContext;
     };
+    SyncManager: any; // バックグラウンド同期用
+  }
+
+  interface ServiceWorkerRegistration {
+    // バックグラウンド同期用の型定義を追加
+    sync?: {
+      register(tag: string): Promise<void>;
+    };
+    periodicSync?: {
+      register(tag: string, options: { minInterval: number }): Promise<void>;
+    };
   }
 }
 
@@ -329,6 +340,49 @@ export default function Notification({
     return outputArray;
   }
 
+  // ServiceWorkerを定期的に呼び出す処理を追加
+  const requestBackgroundSync = useCallback(async () => {
+    if ("serviceWorker" in navigator && "SyncManager" in window) {
+      try {
+        const registration = await navigator.serviceWorker.ready;
+
+        // 同期タスクを登録
+        if (registration.sync) {
+          await registration.sync.register("notification-check");
+          console.log("バックグラウンド同期を登録しました");
+        }
+
+        // Periodic Sync APIが使用可能かどうかチェック
+        if (registration.periodicSync) {
+          // 許可状態を確認
+          try {
+            const status = await navigator.permissions.query({
+              name: "periodic-background-sync" as PermissionName,
+            });
+
+            if (status.state === "granted") {
+              await registration.periodicSync.register("notification-sync", {
+                minInterval: 60 * 60 * 1000, // 1時間ごと
+              });
+              console.log("定期的バックグラウンド同期を登録しました");
+            } else {
+              console.log(
+                "定期的バックグラウンド同期の権限がありません:",
+                status.state
+              );
+            }
+          } catch (permissionError) {
+            console.warn("権限の確認に失敗:", permissionError);
+          }
+        }
+      } catch (error) {
+        console.error("バックグラウンド同期の登録に失敗:", error);
+      }
+    } else {
+      console.warn("このブラウザはバックグラウンド同期をサポートしていません");
+    }
+  }, []);
+
   // コンポーネントマウント時に通知許可をリクエストし、Service Workerを登録
   useEffect(() => {
     console.log("===============================================");
@@ -338,7 +392,10 @@ export default function Notification({
     requestNotificationPermission();
 
     // Service Workerの登録（スマホでバックグラウンド通知に対応するため）
-    registerServiceWorker();
+    registerServiceWorker().then(() => {
+      // ServiceWorkerの登録後にバックグラウンド同期を設定
+      requestBackgroundSync();
+    });
 
     // Audio要素を作成
     const audio = new Audio(
@@ -427,7 +484,12 @@ export default function Notification({
       }
       clearInterval(wakeInterval);
     };
-  }, [registerServiceWorker, medicines, showNotificationAlert]);
+  }, [
+    registerServiceWorker,
+    medicines,
+    showNotificationAlert,
+    requestBackgroundSync,
+  ]);
 
   // 定期的な通知をスケジュールする関数
   const scheduleNotification = useCallback(
