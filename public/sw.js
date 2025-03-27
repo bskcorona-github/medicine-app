@@ -158,33 +158,27 @@ function saveSchedulesToIndexedDB() {
 // スケジュールされた通知をチェックし、時間になったものを表示
 function checkScheduledNotifications() {
   const now = Date.now();
+  console.log(
+    `Service Worker: 通知チェック実行中... 現在時刻: ${new Date(
+      now
+    ).toLocaleString()}`
+  );
+
+  // 通知対象のスケジュールを先に特定
+  const notificationsToShow = [];
+  const scheduleUpdates = [];
 
   notificationSchedules.forEach((schedule, index) => {
     // 通知時刻になったかチェック
     if (schedule.nextNotification <= now) {
-      console.log(`Service Worker: 通知時刻になりました - ${schedule.name}`);
+      console.log(
+        `Service Worker: 通知時刻になりました - ${schedule.name} (${new Date(
+          schedule.nextNotification
+        ).toLocaleString()})`
+      );
 
-      // 通知を表示
-      self.registration.showNotification("お薬の時間です", {
-        body: `${schedule.name}を服用する時間です`,
-        icon: "/favicon.ico",
-        badge: "/favicon.ico",
-        vibrate: [200, 100, 200],
-        tag: `medicine-${schedule.id}`,
-        requireInteraction: true,
-        renotify: true,
-        silent: false,
-        actions: [
-          {
-            action: "taken",
-            title: "服用しました",
-          },
-          {
-            action: "later",
-            title: "後で",
-          },
-        ],
-      });
+      // 通知対象に追加
+      notificationsToShow.push(schedule);
 
       // 毎日の通知の場合は次の日の同じ時刻に再スケジュール
       if (schedule.daily) {
@@ -200,22 +194,68 @@ function checkScheduledNotifications() {
           nextNotification.setDate(nextNotification.getDate() + 1);
         }
 
-        // スケジュールを更新
-        notificationSchedules[index].nextNotification =
-          nextNotification.getTime();
+        // 更新情報を保存 (インデックスと新しい通知時刻)
+        scheduleUpdates.push({
+          index,
+          nextNotification: nextNotification.getTime(),
+          name: schedule.name,
+        });
+      } else {
+        // 毎日でない場合は削除対象にする (インデックスのみ保存)
+        scheduleUpdates.push({
+          index,
+          delete: true,
+          name: schedule.name,
+        });
+      }
+    }
+  });
+
+  // スケジュールの更新 (削除は後ろから実行)
+  scheduleUpdates
+    .sort((a, b) => b.index - a.index)
+    .forEach((update) => {
+      if (update.delete) {
+        console.log(`Service Worker: 通知スケジュールを削除 - ${update.name}`);
+        notificationSchedules.splice(update.index, 1);
+      } else {
         console.log(
-          `Service Worker: 次回通知を設定 - ${schedule.name} (${new Date(
-            nextNotification.getTime()
+          `Service Worker: 次回通知を設定 - ${update.name} (${new Date(
+            update.nextNotification
           ).toLocaleString()})`
         );
-      } else {
-        // 毎日でない場合はスケジュールから削除
-        notificationSchedules.splice(index, 1);
+        notificationSchedules[update.index].nextNotification =
+          update.nextNotification;
       }
+    });
 
-      // 変更をIndexedDBに保存
-      saveSchedulesToIndexedDB();
-    }
+  // 変更があった場合のみIndexedDBに保存
+  if (scheduleUpdates.length > 0) {
+    saveSchedulesToIndexedDB();
+  }
+
+  // 通知を順番に表示
+  notificationsToShow.forEach((schedule) => {
+    self.registration.showNotification("お薬の時間です", {
+      body: `${schedule.name}を服用する時間です`,
+      icon: "/favicon.ico",
+      badge: "/favicon.ico",
+      vibrate: [200, 100, 200],
+      tag: `medicine-${schedule.id}`,
+      requireInteraction: true,
+      renotify: true,
+      silent: false,
+      actions: [
+        {
+          action: "taken",
+          title: "服用しました",
+        },
+        {
+          action: "later",
+          title: "後で",
+        },
+      ],
+    });
   });
 }
 

@@ -296,11 +296,14 @@ export default function Notification({
 
         // メッセージチャネルのテスト
         if (navigator.serviceWorker.controller) {
+          // デバッグテスト通知をコメントアウト
+          /*
           navigator.serviceWorker.controller.postMessage({
             type: "DEBUG_TEST",
             time: new Date().toISOString(),
           });
           console.log("Service Workerにデバッグメッセージを送信しました");
+          */
         }
       } catch (error) {
         console.error("Service Worker 登録失敗:", error);
@@ -328,6 +331,10 @@ export default function Notification({
 
   // コンポーネントマウント時に通知許可をリクエストし、Service Workerを登録
   useEffect(() => {
+    console.log("===============================================");
+    console.log("🔔 通知コンポーネントを初期化します");
+    console.log("===============================================");
+
     requestNotificationPermission();
 
     // Service Workerの登録（スマホでバックグラウンド通知に対応するため）
