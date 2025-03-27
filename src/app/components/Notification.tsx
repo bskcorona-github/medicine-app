@@ -494,126 +494,6 @@ export default function Notification({
     }
   }, []);
 
-  // コンポーネントマウント時に通知許可をリクエストし、Service Workerを登録
-  useEffect(() => {
-    console.log("===============================================");
-    console.log("🔔 通知コンポーネントを初期化します");
-    console.log("===============================================");
-
-    // Audio要素を作成
-    const audio = new Audio(
-      "/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav"
-    );
-    audio.preload = "auto"; // 事前に読み込み
-    audioRef.current = audio;
-
-    // 初期化処理は一度だけ実行
-    const initialized = localStorage.getItem("notification_initialized");
-    const now = new Date().getTime();
-
-    // 前回の初期化から1分以上経過している場合のみ実行（無限ループ防止）
-    if (!initialized || now - parseInt(initialized) > 60000) {
-      localStorage.setItem("notification_initialized", now.toString());
-
-      requestNotificationPermission();
-
-      // Service Workerの登録（スマホでバックグラウンド通知に対応するため）
-      registerServiceWorker().then(() => {
-        // ServiceWorkerの登録後にバックグラウンド同期を設定
-        requestBackgroundSync();
-      });
-
-      // ローカルストレージから通知スケジュールを読み込み
-      try {
-        const schedulesJson =
-          localStorage.getItem("notificationSchedules") || "[]";
-        const schedules = JSON.parse(schedulesJson);
-
-        if (schedules.length > 0) {
-          console.log(
-            `保存された${schedules.length}件の通知スケジュールを読み込みました`
-          );
-
-          // ページが開かれた時点で未来の通知のみを再スケジュール
-          const now = new Date().getTime();
-          schedules.forEach(
-            (schedule: {
-              id: string;
-              name: string;
-              time: string;
-              nextNotification: number;
-              daily: boolean;
-            }) => {
-              // 次の通知時刻が過去の場合は、新しい通知時刻を計算
-              if (schedule.nextNotification < now) {
-                // 時刻を解析
-                const [hours, minutes] = schedule.time.split(":").map(Number);
-                const nextDate = new Date();
-                nextDate.setHours(hours, minutes, 0, 0);
-
-                // 今日の指定時刻がすでに過ぎている場合は明日にスケジュール
-                if (nextDate.getTime() < now) {
-                  nextDate.setDate(nextDate.getDate() + 1);
-                }
-
-                schedule.nextNotification = nextDate.getTime();
-              }
-
-              // 通知時刻までの待機時間
-              const waitTime = schedule.nextNotification - now;
-
-              // 薬の情報から通知を再スケジュール
-              console.log(
-                `保存されたスケジュールから ${schedule.name} の通知を ${waitTime}ms 後に再設定します`
-              );
-
-              // 同じ薬に対する通知が多数発生しないように制限を設ける
-              if (waitTime > 0 && waitTime < 24 * 60 * 60 * 1000) {
-                setTimeout(() => {
-                  // 該当する薬を現在のリストから探す
-                  const medicine = medicines.find((m) => m.id === schedule.id);
-                  if (medicine && !medicine.taken) {
-                    // 見つかった場合は通知を表示
-                    console.log(
-                      `保存されたスケジュールから ${schedule.name} の通知時間になりました`
-                    );
-                    showNotificationAlert(medicine);
-                  }
-                }, waitTime);
-              }
-            }
-          );
-        }
-      } catch (error) {
-        console.error("保存された通知スケジュールの読み込みに失敗:", error);
-      }
-    }
-
-    // ServiceWorkerを定期的に起こして通知をチェック（バックグラウンドでも動作させるため）
-    const wakeInterval = setInterval(() => {
-      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-        navigator.serviceWorker.controller.postMessage({
-          type: "CHECK_NOTIFICATION_SCHEDULES",
-          time: new Date().toISOString(),
-        });
-      }
-    }, 60000); // 1分ごとに確認
-
-    // コンポーネントのアンマウント時にクリーンアップ
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-      clearInterval(wakeInterval);
-    };
-  }, [
-    registerServiceWorker,
-    medicines,
-    showNotificationAlert,
-    requestBackgroundSync,
-  ]);
-
   // 定期的な通知をスケジュールする関数
   const scheduleNotification = useCallback(
     async (medicine: Medicine) => {
@@ -653,10 +533,13 @@ export default function Notification({
               localStorage.getItem("notificationSchedules") || "[]";
             const schedules = JSON.parse(schedulesJson);
 
-            // 新しいスケジュールを追加（同じIDの薬がある場合は更新）
-            const scheduleIndex = schedules.findIndex(
-              (s: { id: string }) => s.id === medicine.id
+            // 重複を防ぐため、同じ薬と同じ時間のスケジュールを削除
+            const filteredSchedules = schedules.filter(
+              (s: { id: string; time: string }) =>
+                !(s.id === medicine.id && s.time === medicine.time)
             );
+
+            // 新しいスケジュールを追加
             const newSchedule = {
               id: medicine.id,
               name: medicine.name,
@@ -665,16 +548,12 @@ export default function Notification({
               daily: medicine.daily,
             };
 
-            if (scheduleIndex >= 0) {
-              schedules[scheduleIndex] = newSchedule;
-            } else {
-              schedules.push(newSchedule);
-            }
+            filteredSchedules.push(newSchedule);
 
             // スケジュールを保存
             localStorage.setItem(
               "notificationSchedules",
-              JSON.stringify(schedules)
+              JSON.stringify(filteredSchedules)
             );
             console.log(
               `通知スケジュールをローカルストレージに保存: ${medicine.name}`
@@ -765,6 +644,135 @@ export default function Notification({
     },
     [showNotificationAlert, notificationPermission]
   );
+
+  // コンポーネントマウント時に通知許可をリクエストし、Service Workerを登録
+  useEffect(() => {
+    console.log("===============================================");
+    console.log("🔔 通知コンポーネントを初期化します");
+    console.log("===============================================");
+
+    // Audio要素を作成
+    const audio = new Audio(
+      "/sounds/001_ずんだもん（ノーマル）_おくすりのじかんだ….wav"
+    );
+    audio.preload = "auto"; // 事前に読み込み
+    audioRef.current = audio;
+
+    // 初期化処理は一度だけ実行
+    const initialized = localStorage.getItem("notification_initialized");
+    const now = new Date().getTime();
+
+    // 前回の初期化から1分以上経過している場合のみ実行（無限ループ防止）
+    if (!initialized || now - parseInt(initialized) > 60000) {
+      localStorage.setItem("notification_initialized", now.toString());
+
+      requestNotificationPermission();
+
+      // Service Workerの登録（スマホでバックグラウンド通知に対応するため）
+      registerServiceWorker().then(() => {
+        // ServiceWorkerの登録後にバックグラウンド同期を設定
+        requestBackgroundSync();
+      });
+
+      // ローカルストレージから通知スケジュールを読み込み
+      try {
+        // すべてのスケジュールをクリアしてリセット
+        const shouldReset = localStorage.getItem("reset_schedules") !== "done";
+
+        if (shouldReset) {
+          console.log("通知スケジュールをリセットします");
+          localStorage.setItem("notificationSchedules", "[]");
+          localStorage.setItem("reset_schedules", "done");
+        }
+
+        const schedulesJson =
+          localStorage.getItem("notificationSchedules") || "[]";
+        const schedules = JSON.parse(schedulesJson);
+
+        if (schedules.length > 0) {
+          console.log(
+            `保存された${schedules.length}件の通知スケジュールを読み込みました`
+          );
+
+          // ページが開かれた時点で未来の通知のみを再スケジュール
+          const now = new Date().getTime();
+          schedules.forEach(
+            (schedule: {
+              id: string;
+              name: string;
+              time: string;
+              nextNotification: number;
+              daily: boolean;
+            }) => {
+              // 次の通知時刻が過去の場合は、新しい通知時刻を計算
+              if (schedule.nextNotification < now) {
+                // 時刻を解析
+                const [hours, minutes] = schedule.time.split(":").map(Number);
+                const nextDate = new Date();
+                nextDate.setHours(hours, minutes, 0, 0);
+
+                // 今日の指定時刻がすでに過ぎている場合は明日にスケジュール
+                if (nextDate.getTime() < now) {
+                  nextDate.setDate(nextDate.getDate() + 1);
+                }
+
+                schedule.nextNotification = nextDate.getTime();
+              }
+
+              // 通知時刻までの待機時間
+              const waitTime = schedule.nextNotification - now;
+
+              // 薬の情報から通知を再スケジュール
+              console.log(
+                `保存されたスケジュールから ${schedule.name} の通知を ${waitTime}ms 後に再設定します`
+              );
+
+              // 同じ薬に対する通知が多数発生しないように制限を設ける
+              if (waitTime > 0 && waitTime < 24 * 60 * 60 * 1000) {
+                setTimeout(() => {
+                  // 該当する薬を現在のリストから探す
+                  const medicine = medicines.find((m) => m.id === schedule.id);
+                  if (medicine && !medicine.taken) {
+                    // 見つかった場合は通知を表示
+                    console.log(
+                      `保存されたスケジュールから ${schedule.name} の通知時間になりました`
+                    );
+                    showNotificationAlert(medicine);
+                  }
+                }, waitTime);
+              }
+            }
+          );
+        }
+      } catch (error) {
+        console.error("保存された通知スケジュールの読み込みに失敗:", error);
+      }
+    }
+
+    // ServiceWorkerを定期的に起こして通知をチェック（バックグラウンドでも動作させるため）
+    const wakeInterval = setInterval(() => {
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: "CHECK_NOTIFICATION_SCHEDULES",
+          time: new Date().toISOString(),
+        });
+      }
+    }, 60000); // 1分ごとに確認
+
+    // コンポーネントのアンマウント時にクリーンアップ
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+      clearInterval(wakeInterval);
+    };
+  }, [
+    registerServiceWorker,
+    medicines,
+    showNotificationAlert,
+    requestBackgroundSync,
+  ]);
 
   // 1分ごとに薬の時間をチェック
   useEffect(() => {
