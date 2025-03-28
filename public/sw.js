@@ -10,7 +10,6 @@ const SOUND_FILE_PATH = "/sounds/001_zundamon_okusuri.wav";
 // キャッシュするファイル（相対パスに修正）
 const urlsToCache = [
   "/",
-  "/index.html",
   "/icon/favicon.ico",
   "/icon/android-chrome-192x192.png",
   "/icon/android-chrome-512x512.png",
@@ -70,23 +69,30 @@ self.addEventListener("install", (event) => {
             );
           })
           .then(() => {
-            // その他のファイルをキャッシュ
+            // その他の静的ファイルをキャッシュ
             return Promise.all(
               urlsToCache.map((url) => {
                 // 音声ファイルは既にキャッシュ済みなのでスキップ
                 if (url === SOUND_FILE_PATH) return Promise.resolve();
 
+                // ルートパスの場合は特別な処理
+                if (url === "/") {
+                  console.log(
+                    "ルートパスはNext.jsが処理するためスキップします"
+                  );
+                  return Promise.resolve();
+                }
+
                 return fetch(url, { cache: "no-store" })
                   .then((response) => {
-                    // 有効なレスポンスのみキャッシュ
                     if (!response.ok) {
                       throw new Error(`キャッシュに失敗: ${url}`);
                     }
                     return cache.put(url, response);
                   })
                   .catch((error) => {
-                    console.error(`キャッシュエラー (${url}):`, error);
-                    // エラーがあっても処理を続行
+                    // エラーをログに記録するが、処理は続行
+                    console.warn(`キャッシュスキップ (${url}):`, error);
                   });
               })
             );
@@ -536,35 +542,36 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // navigationリクエストかどうかをチェック
-  if (event.request.mode === "navigate") {
-    console.log("Service Worker: ナビゲーションリクエスト", event.request.url);
-  }
-
-  // その他のリソースのリクエスト処理
+  // Next.jsのダイナミックルーティングを考慮したフェッチ処理
   event.respondWith(
-    caches
-      .match(event.request)
-      .then((response) => {
-        if (response) {
-          console.log(
-            "Service Worker: キャッシュからレスポンス",
-            event.request.url
-          );
+    caches.match(event.request).then((response) => {
+      // キャッシュがある場合はそれを返す
+      if (response) {
+        return response;
+      }
+
+      // キャッシュがない場合はネットワークにフェッチ
+      return fetch(event.request).then((response) => {
+        // 404エラーの場合はNext.jsのデフォルトエラーページを返す
+        if (!response.ok && response.status === 404) {
           return response;
         }
-        console.log(
-          "Service Worker: ネットワークからフェッチ",
-          event.request.url
-        );
 
-        // no-storeオプションを追加して無限ループを防止
-        return fetch(event.request, { cache: "no-store" });
-      })
-      .catch((error) => {
-        console.error("Service Worker: フェッチエラー", error);
-        // ネットワークエラーの場合、オフラインページを返すこともできる
-      })
+        // 静的アセットの場合のみキャッシュを試みる
+        if (
+          response.ok &&
+          (event.request.url.includes("/icon/") ||
+            event.request.url.includes("/sounds/"))
+        ) {
+          const responseToCache = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(event.request, responseToCache);
+          });
+        }
+
+        return response;
+      });
+    })
   );
 });
 
