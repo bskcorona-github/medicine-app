@@ -223,54 +223,62 @@ function removeDuplicateSchedules(schedules) {
 
 // IndexedDBから通知スケジュールを読み込む
 function loadSchedulesFromIndexedDB() {
-  if ("indexedDB" in self) {
-    const request = indexedDB.open("medicineReminderDB", 1);
+  return new Promise((resolve, reject) => {
+    if ("indexedDB" in self) {
+      const request = indexedDB.open("medicineReminderDB", 1);
 
-    request.onupgradeneeded = function (event) {
-      const db = event.target.result;
-      if (!db.objectStoreNames.contains("notificationSchedules")) {
-        db.createObjectStore("notificationSchedules", { keyPath: "id" });
-      }
-    };
-
-    request.onsuccess = function (event) {
-      const db = event.target.result;
-      const transaction = db.transaction(["notificationSchedules"], "readonly");
-      const store = transaction.objectStore("notificationSchedules");
-      const getAllRequest = store.getAll();
-
-      getAllRequest.onsuccess = function () {
-        const loadedSchedules = getAllRequest.result || [];
-        // 重複を削除
-        notificationSchedules = removeDuplicateSchedules(loadedSchedules);
-
-        if (notificationSchedules.length !== loadedSchedules.length) {
-          console.log(
-            `Service Worker: 重複を${
-              loadedSchedules.length - notificationSchedules.length
-            }件削除しました`
-          );
-          // 重複が削除された場合は保存し直す
-          saveSchedulesToIndexedDB();
+      request.onupgradeneeded = function (event) {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains("notificationSchedules")) {
+          db.createObjectStore("notificationSchedules", { keyPath: "id" });
         }
+      };
 
-        console.log(
-          `Service Worker: ${notificationSchedules.length}件の通知スケジュールを読み込みました`
+      request.onsuccess = function (event) {
+        const db = event.target.result;
+        const transaction = db.transaction(
+          ["notificationSchedules"],
+          "readonly"
         );
+        const store = transaction.objectStore("notificationSchedules");
+        const getAllRequest = store.getAll();
 
-        // スケジュールを読み込んだ後に通知をチェック
-        checkScheduledNotifications();
+        getAllRequest.onsuccess = function () {
+          const loadedSchedules = getAllRequest.result || [];
+          // 重複を削除
+          notificationSchedules = removeDuplicateSchedules(loadedSchedules);
+
+          if (notificationSchedules.length !== loadedSchedules.length) {
+            console.log(
+              `Service Worker: 重複を${
+                loadedSchedules.length - notificationSchedules.length
+              }件削除しました`
+            );
+            // 重複が削除された場合は保存し直す
+            saveSchedulesToIndexedDB();
+          }
+
+          console.log(
+            `Service Worker: ${notificationSchedules.length}件の通知スケジュールを読み込みました`
+          );
+
+          resolve(notificationSchedules);
+        };
+
+        getAllRequest.onerror = function (error) {
+          console.error("Service Worker: スケジュール読み込みエラー", error);
+          reject(error);
+        };
       };
 
-      getAllRequest.onerror = function (error) {
-        console.error("Service Worker: スケジュール読み込みエラー", error);
+      request.onerror = function (error) {
+        console.error("Service Worker: IndexedDB接続エラー", error);
+        reject(error);
       };
-    };
-
-    request.onerror = function (error) {
-      console.error("Service Worker: IndexedDB接続エラー", error);
-    };
-  }
+    } else {
+      resolve([]); // IndexedDBが利用できない場合は空の配列を返す
+    }
+  });
 }
 
 // IndexedDBに通知スケジュールを保存する前に重複を削除
@@ -702,8 +710,8 @@ self.addEventListener("notificationclick", (event) => {
   }
 });
 
-// メッセージ受信時の処理
-self.addEventListener("message", (event) => {
+// メッセージ受信時の処理を修正
+self.addEventListener("message", async (event) => {
   console.log("Service Worker: メッセージを受信", event.data);
 
   // デバッグ用メッセージの場合
@@ -714,17 +722,15 @@ self.addEventListener("message", (event) => {
     );
 
     // キャッシュ状態を確認して応答
-    ensureSoundFileCached().then((soundResponse) => {
-      event.source.postMessage({
-        type: "DEBUG_RESPONSE",
-        message: "デバッグテストを受け取りました",
-        time: new Date().toISOString(),
-        soundCached: !!soundResponse,
-        swVersion: SW_VERSION,
-        schedules: notificationSchedules.length,
-      });
+    const soundResponse = await ensureSoundFileCached();
+    event.source.postMessage({
+      type: "DEBUG_RESPONSE",
+      message: "デバッグテストを受け取りました",
+      time: new Date().toISOString(),
+      soundCached: !!soundResponse,
+      swVersion: SW_VERSION,
+      schedules: notificationSchedules.length,
     });
-
     return;
   }
 
@@ -732,20 +738,22 @@ self.addEventListener("message", (event) => {
   if (event.data && event.data.type === "CHECK_NOTIFICATION_SCHEDULES") {
     console.log("Service Worker: 通知スケジュールのチェックリクエスト");
 
-    // スケジュールをロードして確認
-    loadSchedulesFromIndexedDB()
-      .then(() => checkScheduledNotifications())
-      .then((notificationShown) => {
-        if (event.source) {
-          event.source.postMessage({
-            type: "NOTIFICATION_CHECK_RESULT",
-            time: new Date().toISOString(),
-            notificationShown: notificationShown,
-            scheduleCount: notificationSchedules.length,
-          });
-        }
-      });
+    try {
+      // スケジュールをロードして確認
+      await loadSchedulesFromIndexedDB();
+      const notificationShown = await checkScheduledNotifications();
 
+      if (event.source) {
+        event.source.postMessage({
+          type: "NOTIFICATION_CHECK_RESULT",
+          time: new Date().toISOString(),
+          notificationShown: notificationShown,
+          scheduleCount: notificationSchedules.length,
+        });
+      }
+    } catch (error) {
+      console.error("Service Worker: 通知チェック中にエラー:", error);
+    }
     return;
   }
 

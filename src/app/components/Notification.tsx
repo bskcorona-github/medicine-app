@@ -39,6 +39,11 @@ declare global {
   }
 }
 
+// AudioContextの型定義を追加
+interface ExtendedWindow extends Window {
+  webkitAudioContext: typeof AudioContext;
+}
+
 type NotificationProps = {
   medicines: Medicine[];
   onNotificationClick: (id: string) => void;
@@ -143,187 +148,74 @@ export default function Notification({
         }
       }
 
-      // 確実に新しいAudio要素を作成
-      const tempAudio = new Audio();
-      tempAudio.src = soundUrl;
-
-      // オーディオをrefに設定
-      audioRef.current = tempAudio;
-
-      // 音量設定
-      tempAudio.volume = 1.0;
-
-      // モバイルでの自動再生制限に対応するためユーザーインタラクションを模倣
-      interface WebkitWindow extends Window {
-        webkitAudioContext: typeof AudioContext;
-      }
-
+      // AudioContextを使用した再生を試みる
       const AudioContextClass =
-        window.AudioContext || (window as WebkitWindow).webkitAudioContext;
+        window.AudioContext || (window as ExtendedWindow).webkitAudioContext;
+
       if (AudioContextClass) {
-        const context = new AudioContextClass();
-        context
-          .resume()
-          .catch((err) => console.log("AudioContext resume error:", err));
-      }
-
-      // 再生準備
-      tempAudio.preload = "auto";
-
-      // 読み込み開始イベント
-      tempAudio.addEventListener("loadstart", () => {
-        console.log("音声ファイルの読み込みを開始しました");
-      });
-
-      // エラーハンドリングを強化
-      tempAudio.addEventListener("error", (e) => {
-        console.error("音声読み込みエラー:", e);
-        console.error("音声ファイルパス:", tempAudio.src);
-        setIsPlaying(false);
-
-        // 代替方法を試す - fetch APIでファイルの存在確認
         fetch(soundUrl)
-          .then((response) => {
-            if (response.ok) {
-              console.log(
-                "音声ファイルは存在していますが、再生できません。代替方法を試みます"
-              );
-
-              // 代替方法1: 高レベルAPIを使用
-              try {
-                // AudioContextで再生を試みる
-                const AudioContextClass =
-                  window.AudioContext ||
-                  (
-                    window as unknown as {
-                      webkitAudioContext: typeof AudioContext;
-                    }
-                  ).webkitAudioContext;
-                const audioCtx = new AudioContextClass();
-
-                response.arrayBuffer().then((buffer) => {
-                  audioCtx.decodeAudioData(buffer, (audioBuffer) => {
-                    const source = audioCtx.createBufferSource();
-                    source.buffer = audioBuffer;
-                    source.connect(audioCtx.destination);
-                    source.start(0);
-                    console.log("AudioContext APIで音声再生を開始しました");
-
-                    // 再生完了時の処理
-                    source.onended = () => {
-                      console.log("AudioContext APIでの音声再生が完了しました");
-                      setIsPlaying(false);
-                    };
-                  });
-                });
-              } catch (audioCtxError) {
-                console.warn(
-                  "AudioContext APIでの再生にも失敗:",
-                  audioCtxError
-                );
-
-                // 代替方法2: 新しいAudio要素で再試行
-                try {
-                  const alternativeAudio = new Audio();
-                  alternativeAudio.src = soundUrl;
-                  alternativeAudio.volume = 1.0;
-
-                  // 再生前にイベントリスナーを設定
-                  alternativeAudio.addEventListener(
-                    "ended",
-                    () => {
-                      console.log("代替方法の音声再生が完了しました");
-                      setIsPlaying(false);
-                      // メモリリークを防ぐため明示的に解放
-                      alternativeAudio.src = "";
-                    },
-                    { once: true }
-                  );
-
-                  alternativeAudio.play().catch((err) => {
-                    console.warn("代替方法でも音声再生に失敗:", err);
-                    setIsPlaying(false); // 再生に失敗した場合も状態をリセット
-                  });
-                } catch (alternativeError) {
-                  console.error(
-                    "すべての音声再生方法が失敗:",
-                    alternativeError
-                  );
-                  setIsPlaying(false);
-                }
-              }
-            } else {
-              console.error("音声ファイルが見つかりません:", response.status);
-              console.error("音声ファイルのURL:", soundUrl);
-              setIsPlaying(false);
-            }
+          .then((response) => response.arrayBuffer())
+          .then((arrayBuffer) => {
+            const audioContext = new AudioContextClass();
+            return audioContext.decodeAudioData(arrayBuffer);
           })
-          .catch((err) => {
-            console.error("音声ファイルの確認に失敗:", err);
-            setIsPlaying(false);
-          });
-      });
+          .then((audioBuffer) => {
+            const source = new AudioContextClass().createBufferSource();
+            source.buffer = audioBuffer;
+            source.connect(new AudioContextClass().destination);
+            source.start(0);
 
-      // 読み込み完了イベント
-      tempAudio.addEventListener(
-        "canplaythrough",
-        () => {
-          console.log("音声ファイルの読み込みが完了しました");
-          // 再生準備ができたら再生を試みる
-          tempAudio.play().catch((error) => {
-            console.error("音声再生に失敗しました:", error);
-            setIsPlaying(false);
-          });
-        },
-        { once: true }
-      );
-
-      // 再生完了時の処理
-      tempAudio.addEventListener(
-        "ended",
-        () => {
-          console.log("音声再生が完了しました");
-          setIsPlaying(false);
-
-          // メモリリークを防ぐため明示的に解放
-          tempAudio.src = "";
-        },
-        { once: true }
-      );
-
-      // 再生開始
-      const playPromise = tempAudio.play();
-
-      // Play()は非同期なのでPromiseを処理
-      if (playPromise !== undefined) {
-        playPromise
-          .then(() => {
-            console.log("音声再生を開始しました");
+            // 再生完了時の処理
+            source.onended = () => {
+              console.log("AudioContext APIでの音声再生が完了しました");
+              setIsPlaying(false);
+            };
           })
           .catch((error) => {
-            console.error("音声再生開始時にエラー:", error);
-
-            // 自動再生ポリシーによるエラーの場合、3秒後に再試行
-            if (error.name === "NotAllowedError") {
-              console.log("自動再生ポリシーによるエラー、再試行します");
-              setTimeout(() => {
-                if (audioRef.current) {
-                  audioRef.current.play().catch((retryError) => {
-                    console.error("再試行にも失敗:", retryError);
-                    setIsPlaying(false);
-                  });
-                }
-              }, 3000);
-            } else {
-              setIsPlaying(false);
-            }
+            console.error("AudioContext APIでの再生に失敗:", error);
+            // フォールバックとしてAudio要素を使用
+            fallbackToAudioElement(soundUrl);
           });
+      } else {
+        // AudioContextが利用できない場合はAudio要素を使用
+        fallbackToAudioElement(soundUrl);
       }
     } catch (error) {
       console.error("音声再生の準備中にエラー:", error);
       setIsPlaying(false);
     }
   }, [isPlaying]);
+
+  // Audio要素を使用したフォールバック再生
+  const fallbackToAudioElement = (soundUrl: string) => {
+    const audio = new Audio();
+    audio.src = soundUrl;
+    audio.volume = 1.0;
+    audio.preload = "auto";
+
+    // エラーハンドリング
+    audio.onerror = (error) => {
+      console.error("Audio要素での再生エラー:", error);
+      setIsPlaying(false);
+    };
+
+    // 再生完了時の処理
+    audio.onended = () => {
+      console.log("Audio要素での再生が完了しました");
+      setIsPlaying(false);
+      audio.src = ""; // メモリ解放
+    };
+
+    // 再生準備完了時の処理
+    audio.oncanplaythrough = () => {
+      audio.play().catch((error) => {
+        console.error("Audio要素での再生開始エラー:", error);
+        setIsPlaying(false);
+      });
+    };
+
+    audioRef.current = audio;
+  };
 
   // 通知を表示する関数
   const showNotificationAlert = useCallback(
