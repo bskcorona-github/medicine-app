@@ -121,34 +121,33 @@ export default function Notification({
     lastPlayRequestRef.current = now;
 
     try {
-      if (audioRef.current) {
-        // 以前の再生が終了していない場合は停止
-        if (!audioRef.current.paused) {
-          audioRef.current.pause();
-          audioRef.current.currentTime = 0;
-        }
-      }
-
+      // 再生状態を更新
       setIsPlaying(true);
-
-      // 現在時刻を使ってキャッシュバスティング
-      const timestamp = new Date().getTime();
 
       // 音声ファイルのパスを調整（sw.jsと統一）
       const soundPath = "/sounds/001_zundamon_okusuri.wav";
+      const timestamp = new Date().getTime();
+      const soundUrl = `${soundPath}?t=${timestamp}`;
 
-      console.log(`音声ファイルを読み込み: ${soundPath}?t=${timestamp}`);
-
-      // 新しいAudio要素を作成（メモリリークを防ぐため、使い捨てにする）
-      const tempAudio = new Audio(`${soundPath}?t=${timestamp}`);
+      console.log(`音声ファイルを読み込み: ${soundUrl}`);
 
       // 既存のオーディオがあれば解放
       if (audioRef.current) {
-        audioRef.current.src = "";
-        audioRef.current.load();
+        try {
+          audioRef.current.pause();
+          audioRef.current.currentTime = 0;
+          audioRef.current.src = "";
+          audioRef.current.load();
+        } catch (cleanupError) {
+          console.warn("音声クリーンアップ中にエラー:", cleanupError);
+        }
       }
 
-      // 新しいオーディオをrefに設定
+      // 確実に新しいAudio要素を作成
+      const tempAudio = new Audio();
+      tempAudio.src = soundUrl;
+
+      // オーディオをrefに設定
       audioRef.current = tempAudio;
 
       // 音量設定
@@ -168,7 +167,7 @@ export default function Notification({
           .catch((err) => console.log("AudioContext resume error:", err));
       }
 
-      // プリロードして準備
+      // 再生準備
       tempAudio.preload = "auto";
 
       // 読み込み開始イベント
@@ -183,36 +182,79 @@ export default function Notification({
         setIsPlaying(false);
 
         // 代替方法を試す - fetch APIでファイルの存在確認
-        fetch(`${soundPath}?t=${timestamp}`)
+        fetch(soundUrl)
           .then((response) => {
             if (response.ok) {
               console.log(
                 "音声ファイルは存在していますが、再生できません。代替方法を試みます"
               );
 
-              // 新しいAudio要素で再試行
-              const alternativeAudio = new Audio();
-              alternativeAudio.src = `${soundPath}?t=${timestamp}`;
-              alternativeAudio.volume = 1.0;
-              alternativeAudio.play().catch((err) => {
-                console.warn("代替方法でも音声再生に失敗:", err);
-                setIsPlaying(false); // 再生に失敗した場合も状態をリセット
-              });
+              // 代替方法1: 高レベルAPIを使用
+              try {
+                // AudioContextで再生を試みる
+                const AudioContextClass =
+                  window.AudioContext ||
+                  (
+                    window as unknown as {
+                      webkitAudioContext: typeof AudioContext;
+                    }
+                  ).webkitAudioContext;
+                const audioCtx = new AudioContextClass();
 
-              // 再生完了時の処理を追加
-              alternativeAudio.addEventListener("ended", () => {
-                console.log("代替方法の音声再生が完了しました");
-                setIsPlaying(false);
-                // メモリリークを防ぐため明示的に解放
-                alternativeAudio.src = "";
-                alternativeAudio.remove();
-              });
+                response.arrayBuffer().then((buffer) => {
+                  audioCtx.decodeAudioData(buffer, (audioBuffer) => {
+                    const source = audioCtx.createBufferSource();
+                    source.buffer = audioBuffer;
+                    source.connect(audioCtx.destination);
+                    source.start(0);
+                    console.log("AudioContext APIで音声再生を開始しました");
+
+                    // 再生完了時の処理
+                    source.onended = () => {
+                      console.log("AudioContext APIでの音声再生が完了しました");
+                      setIsPlaying(false);
+                    };
+                  });
+                });
+              } catch (audioCtxError) {
+                console.warn(
+                  "AudioContext APIでの再生にも失敗:",
+                  audioCtxError
+                );
+
+                // 代替方法2: 新しいAudio要素で再試行
+                try {
+                  const alternativeAudio = new Audio();
+                  alternativeAudio.src = soundUrl;
+                  alternativeAudio.volume = 1.0;
+
+                  // 再生前にイベントリスナーを設定
+                  alternativeAudio.addEventListener(
+                    "ended",
+                    () => {
+                      console.log("代替方法の音声再生が完了しました");
+                      setIsPlaying(false);
+                      // メモリリークを防ぐため明示的に解放
+                      alternativeAudio.src = "";
+                    },
+                    { once: true }
+                  );
+
+                  alternativeAudio.play().catch((err) => {
+                    console.warn("代替方法でも音声再生に失敗:", err);
+                    setIsPlaying(false); // 再生に失敗した場合も状態をリセット
+                  });
+                } catch (alternativeError) {
+                  console.error(
+                    "すべての音声再生方法が失敗:",
+                    alternativeError
+                  );
+                  setIsPlaying(false);
+                }
+              }
             } else {
               console.error("音声ファイルが見つかりません:", response.status);
-              console.error(
-                "音声ファイルのURL:",
-                `${soundPath}?t=${timestamp}`
-              );
+              console.error("音声ファイルのURL:", soundUrl);
               setIsPlaying(false);
             }
           })
@@ -222,35 +264,63 @@ export default function Notification({
           });
       });
 
+      // 読み込み完了イベント
+      tempAudio.addEventListener(
+        "canplaythrough",
+        () => {
+          console.log("音声ファイルの読み込みが完了しました");
+          // 再生準備ができたら再生を試みる
+          tempAudio.play().catch((error) => {
+            console.error("音声再生に失敗しました:", error);
+            setIsPlaying(false);
+          });
+        },
+        { once: true }
+      );
+
       // 再生完了時の処理
-      tempAudio.addEventListener("ended", () => {
-        console.log("音声再生が完了しました");
-        setIsPlaying(false);
-
-        // メモリリークを防ぐため明示的に解放
-        tempAudio.src = "";
-      });
-
-      // 音声を再生
-      tempAudio
-        .play()
-        .then(() => {
-          console.log("音声の再生を開始しました");
-        })
-        .catch((err) => {
-          console.warn("音声再生に失敗:", err);
+      tempAudio.addEventListener(
+        "ended",
+        () => {
+          console.log("音声再生が完了しました");
           setIsPlaying(false);
-        });
 
-      // 再生状態の監視
-      const checkPlayingStatus = setInterval(() => {
-        if (tempAudio.ended || tempAudio.paused) {
-          clearInterval(checkPlayingStatus);
-          setIsPlaying(false);
-        }
-      }, 1000);
+          // メモリリークを防ぐため明示的に解放
+          tempAudio.src = "";
+        },
+        { once: true }
+      );
+
+      // 再生開始
+      const playPromise = tempAudio.play();
+
+      // Play()は非同期なのでPromiseを処理
+      if (playPromise !== undefined) {
+        playPromise
+          .then(() => {
+            console.log("音声再生を開始しました");
+          })
+          .catch((error) => {
+            console.error("音声再生開始時にエラー:", error);
+
+            // 自動再生ポリシーによるエラーの場合、3秒後に再試行
+            if (error.name === "NotAllowedError") {
+              console.log("自動再生ポリシーによるエラー、再試行します");
+              setTimeout(() => {
+                if (audioRef.current) {
+                  audioRef.current.play().catch((retryError) => {
+                    console.error("再試行にも失敗:", retryError);
+                    setIsPlaying(false);
+                  });
+                }
+              }, 3000);
+            } else {
+              setIsPlaying(false);
+            }
+          });
+      }
     } catch (error) {
-      console.error("音声再生処理中にエラーが発生しました:", error);
+      console.error("音声再生の準備中にエラー:", error);
       setIsPlaying(false);
     }
   }, [isPlaying]);
@@ -721,7 +791,8 @@ export default function Notification({
     console.log(`音声ファイルパス: ${soundPath}`);
 
     // Audio要素を作成
-    const audio = new Audio(soundPath);
+    const audio = new Audio();
+    audio.src = soundPath; // 明示的にパスを設定
     audio.preload = "auto"; // 事前に読み込み
     audioRef.current = audio;
 
@@ -730,6 +801,28 @@ export default function Notification({
       console.error("初期化時の音声読み込みエラー:", e);
       console.error("初期化時の音声ファイルパス:", audio.src);
     });
+
+    // 初期化が完了したことをログに記録
+    audio.addEventListener(
+      "canplaythrough",
+      () => {
+        console.log("音声の初期化が完了しました");
+      },
+      { once: true }
+    );
+
+    // 一度テスト読み込みを行う
+    fetch(soundPath, { cache: "no-store" })
+      .then((response) => {
+        if (response.ok) {
+          console.log("音声ファイルの存在を確認しました");
+        } else {
+          console.error("音声ファイルが存在しません:", response.status);
+        }
+      })
+      .catch((error) => {
+        console.error("音声ファイル確認中にエラー:", error);
+      });
 
     // 初期化処理は一度だけ実行（ローカルストレージで追跡）
     // ランダムIDを生成して初回か2回目かが判別できるようにする
