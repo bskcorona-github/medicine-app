@@ -315,6 +315,139 @@ function saveSchedulesToIndexedDB() {
   }
 }
 
+// バックグラウンドで音声を再生する関数（サービスワーカーからクライアントに依頼）
+function playNotificationSoundOnClients() {
+  const now = Date.now();
+
+  // メッセージ送信の最小間隔を設定
+  const soundMessageDebounceDuration = MESSAGE_DEBOUNCE_MS; // メッセージ送信デバウンス
+
+  // 最後の音声通知から一定時間経過していない場合はスキップ
+  if (now - (lastGlobalNotifications.sound || 0) < SOUND_DEBOUNCE_MS) {
+    console.log(
+      `Service Worker: 最後の音声通知から${
+        (now - (lastGlobalNotifications.sound || 0)) / 1000
+      }秒しか経過していないため、音声をスキップします`
+    );
+    return Promise.resolve(false);
+  }
+
+  // 最後のメッセージ送信から一定時間経過していない場合もスキップ
+  if (
+    now - (lastGlobalNotifications.message || 0) <
+    soundMessageDebounceDuration
+  ) {
+    console.log(
+      `Service Worker: 最後のメッセージ送信から${
+        (now - (lastGlobalNotifications.message || 0)) / 1000
+      }秒しか経過していないため、音声メッセージをスキップします`
+    );
+    return Promise.resolve(false);
+  }
+
+  // 時間を更新
+  lastGlobalNotifications.sound = now;
+  lastGlobalNotifications.message = now;
+
+  return self.clients
+    .matchAll({
+      type: "window",
+      includeUncontrolled: true,
+    })
+    .then((clients) => {
+      if (clients.length === 0) {
+        console.log(
+          "Service Worker: クライアントが見つかりません、新しいウィンドウを開きます"
+        );
+        // クライアントがなければ新しいウィンドウを開く
+        const url = `${self.registration.scope}?notification=sound&time=${now}`;
+        return self.clients
+          .openWindow(url)
+          .then(() => {
+            console.log(
+              "Service Worker: 音声再生のためにクライアントを起動しました"
+            );
+            return true;
+          })
+          .catch((error) => {
+            console.error("Service Worker: クライアント起動エラー:", error);
+            return false;
+          });
+      } else {
+        // アクティブなクライアントがある場合はメッセージを送信
+        let messageSent = false;
+
+        // すべてのクライアントに対してメッセージを送信（最初の1つが成功すれば十分）
+        const messagePromises = clients.map((client) =>
+          client
+            .postMessage({
+              type: "PLAY_NOTIFICATION_SOUND",
+              time: now,
+            })
+            .then(() => {
+              if (!messageSent) {
+                messageSent = true;
+                console.log(
+                  `Service Worker: 音声再生メッセージをクライアントに送信しました (${client.id})`
+                );
+              }
+              return true;
+            })
+            .catch((error) => {
+              console.error(
+                `Service Worker: クライアント${client.id}へのメッセージ送信エラー:`,
+                error
+              );
+              return false;
+            })
+        );
+
+        return Promise.all(messagePromises).then((results) =>
+          results.some((result) => result)
+        );
+      }
+    })
+    .catch((error) => {
+      console.error("Service Worker: クライアント検索エラー:", error);
+      return false;
+    });
+}
+
+// 音声ファイルのキャッシュを確認し、必要に応じて更新する
+function ensureSoundFileCached() {
+  return caches
+    .open(CACHE_NAME)
+    .then((cache) => {
+      return cache.match(SOUND_FILE_PATH).then((response) => {
+        if (response) {
+          console.log(`Service Worker: 音声ファイルはキャッシュ済みです`);
+          return response;
+        }
+
+        console.log(`Service Worker: 音声ファイルをキャッシュしています...`);
+        return fetch(SOUND_FILE_PATH, { cache: "no-store" }).then(
+          (fetchResponse) => {
+            if (!fetchResponse.ok) {
+              throw new Error(
+                `音声ファイルの取得に失敗: ${fetchResponse.status}`
+              );
+            }
+
+            // キャッシュに保存
+            cache.put(SOUND_FILE_PATH, fetchResponse.clone());
+            console.log(`Service Worker: 音声ファイルをキャッシュしました`);
+
+            return fetchResponse;
+          }
+        );
+      });
+    })
+    .catch((error) => {
+      console.error(`Service Worker: 音声ファイルのキャッシュエラー:`, error);
+      return null;
+    });
+}
+
 // フェッチ時に実行（キャッシュがあればそれを返す）
 self.addEventListener("fetch", (event) => {
   // faviconリクエストの無限ループを防止
@@ -365,16 +498,31 @@ self.addEventListener("fetch", (event) => {
           console.log("Service Worker: 音声ファイルをキャッシュから提供");
           return response;
         }
-        console.log("Service Worker: 音声ファイルをネットワークから取得");
 
-        return fetch(event.request).then((fetchResponse) => {
-          // キャッシュを更新
-          const responseToCache = fetchResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(SOUND_FILE_PATH, responseToCache);
+        console.log("Service Worker: 音声ファイルをネットワークから取得");
+        return fetch(event.request, { cache: "no-store" })
+          .then((fetchResponse) => {
+            if (!fetchResponse.ok) {
+              throw new Error(
+                `音声ファイルの取得に失敗: ${fetchResponse.status}`
+              );
+            }
+
+            // キャッシュを更新
+            const responseToCache = fetchResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(SOUND_FILE_PATH, responseToCache);
+              console.log(
+                "Service Worker: 音声ファイルを新たにキャッシュしました"
+              );
+            });
+
+            return fetchResponse;
+          })
+          .catch((error) => {
+            console.error("Service Worker: 音声ファイル取得エラー:", error);
+            throw error;
           });
-          return fetchResponse;
-        });
       })
     );
     return;
@@ -558,16 +706,47 @@ self.addEventListener("notificationclick", (event) => {
 self.addEventListener("message", (event) => {
   console.log("Service Worker: メッセージを受信", event.data);
 
+  // デバッグ用メッセージの場合
   if (event.data && event.data.type === "DEBUG_TEST") {
     console.log(
       "Service Worker: デバッグテストメッセージを受信",
       event.data.time
     );
-    event.source.postMessage({
-      type: "DEBUG_RESPONSE",
-      message: "デバッグテストを受け取りました",
-      time: new Date().toISOString(),
+
+    // キャッシュ状態を確認して応答
+    ensureSoundFileCached().then((soundResponse) => {
+      event.source.postMessage({
+        type: "DEBUG_RESPONSE",
+        message: "デバッグテストを受け取りました",
+        time: new Date().toISOString(),
+        soundCached: !!soundResponse,
+        swVersion: SW_VERSION,
+        schedules: notificationSchedules.length,
+      });
     });
+
+    return;
+  }
+
+  // 通知スケジュールのチェックリクエスト
+  if (event.data && event.data.type === "CHECK_NOTIFICATION_SCHEDULES") {
+    console.log("Service Worker: 通知スケジュールのチェックリクエスト");
+
+    // スケジュールをロードして確認
+    loadSchedulesFromIndexedDB()
+      .then(() => checkScheduledNotifications())
+      .then((notificationShown) => {
+        if (event.source) {
+          event.source.postMessage({
+            type: "NOTIFICATION_CHECK_RESULT",
+            time: new Date().toISOString(),
+            notificationShown: notificationShown,
+            scheduleCount: notificationSchedules.length,
+          });
+        }
+      });
+
+    return;
   }
 
   if (event.data && event.data.type === "SCHEDULE_NOTIFICATION") {
@@ -977,74 +1156,10 @@ async function showNotificationForMedicine(schedule) {
 
     console.log(`Service Worker: ${schedule.name}の通知を表示しました`);
 
-    // スマホで閉じている場合はアプリを起動する試み
-    const clients = await self.clients.matchAll({
-      type: "window",
-      includeUncontrolled: true,
-    });
+    // 音声再生用の関数を使用
+    await playNotificationSoundOnClients();
 
-    // メッセージ送信の重複防止
-    const messageKey = `playSound-${schedule.id}`;
-
-    // メッセージ送信時間の記録用オブジェクトを初期化
-    if (!self._lastMessageTimes) {
-      self._lastMessageTimes = {};
-    }
-
-    const lastMessageTime = self._lastMessageTimes[messageKey] || 0;
-    if (now - lastMessageTime < MESSAGE_DEBOUNCE_MS) {
-      console.log(
-        `Service Worker: ${schedule.name}の通知音メッセージは最近送信済み(${
-          (now - lastMessageTime) / 1000
-        }秒前)です`
-      );
-      return true;
-    }
-
-    // 最後の音声通知時間もチェック
-    const lastSoundTime = lastGlobalNotifications.sound || 0;
-    if (now - lastSoundTime < SOUND_DEBOUNCE_MS) {
-      console.log(
-        `Service Worker: 最後の音声通知から${
-          (now - lastSoundTime) / 1000
-        }秒しか経過していないため、通知音をスキップします`
-      );
-      return true;
-    }
-
-    // 最新の送信時間を記録
-    self._lastMessageTimes[messageKey] = now;
-    lastGlobalNotifications.sound = now;
-    lastGlobalNotifications.message = now;
-
-    // クライアントが存在しない場合（アプリが閉じている場合）
-    if (clients.length === 0) {
-      console.log(
-        "Service Worker: クライアントが見つかりません、新しいウィンドウを開きます"
-      );
-      // アプリを起動する試み
-      try {
-        await self.clients.openWindow(
-          `${self.registration.scope}?notification=medicine&id=${
-            schedule.id
-          }&time=${Date.now()}`
-        );
-        console.log("Service Worker: 通知のためにクライアントを起動しました");
-      } catch (error) {
-        console.error("Service Worker: クライアント起動エラー", error);
-      }
-    } else {
-      // クライアントが存在する場合は最初の1つだけにメッセージを送信
-      const client = clients[0];
-      client.postMessage({
-        type: "PLAY_NOTIFICATION_SOUND",
-        medicineId: schedule.id,
-        time: now,
-      });
-      console.log(
-        `Service Worker: ${schedule.name}の通知音メッセージを送信しました (クライアント: ${client.id})`
-      );
-    }
+    return true;
   } catch (error) {
     console.error(`Service Worker: 通知の表示に失敗しました: ${error}`);
   }
