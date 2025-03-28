@@ -77,22 +77,6 @@ export default function Notification({
   // 最後の音声再生リクエスト時刻を追跡
   const lastPlayRequestRef = useRef<number>(0);
 
-  // 通知のデバウンス処理用
-  const lastNotificationRef = useRef<{ time: number; id: string | null }>({
-    time: 0,
-    id: null,
-  });
-  const NOTIFICATION_DEBOUNCE_MS = 3000; // 3秒以内の同一薬の通知は無視
-
-  // メッセージ送信イベントを追跡
-  const messageEventRef = useRef<{
-    lastTime: number;
-    sentMessages: Map<string, number>;
-  }>({
-    lastTime: 0,
-    sentMessages: new Map(),
-  });
-
   // 現在時刻を取得し、形式を"HH:MM"に変換する関数
   const formatCurrentTime = (): string => {
     const now = new Date();
@@ -747,22 +731,65 @@ export default function Notification({
       console.error("初期化時の音声ファイルパス:", audio.src);
     });
 
-    // 初期化処理は一度だけ実行
+    // 初期化処理は一度だけ実行（ローカルストレージで追跡）
+    // ランダムIDを生成して初回か2回目かが判別できるようにする
+    const initId =
+      localStorage.getItem("notification_init_id") ||
+      Date.now().toString() + Math.random().toString(36).substring(2, 9);
     const initialized = localStorage.getItem("notification_initialized");
     const now = new Date().getTime();
+
+    console.log(`初期化ID: ${initId}`);
+
+    // 毎回最新の初期化IDを保存しておく
+    localStorage.setItem("notification_init_id", initId);
 
     // 前回の初期化から1分以上経過している場合のみ実行（無限ループ防止）
     const lastInitTime = initialized ? parseInt(initialized, 10) : 0;
     if (!initialized || now - lastInitTime > 60000) {
+      console.log("🔔 通知の初期化処理を実行します（Service Worker登録）");
+
+      // 初期化済みとしてマーク
       localStorage.setItem("notification_initialized", now.toString());
 
+      // 通知許可のリクエスト
       requestNotificationPermission();
 
-      // Service Workerの登録（スマホでバックグラウンド通知に対応するため）
-      registerServiceWorker().then(() => {
-        // ServiceWorkerの登録後にバックグラウンド同期を設定
-        requestBackgroundSync();
-      });
+      // Service Workerを登録する（エラー処理を強化）
+      registerServiceWorker()
+        .then(() => {
+          console.log("🔔 Service Workerの登録が完了しました");
+
+          // ServiceWorkerの登録後にバックグラウンド同期を設定
+          return requestBackgroundSync();
+        })
+        .then(() => {
+          console.log("🔔 バックグラウンド同期の設定が完了しました");
+
+          // Service Workerに通知スケジュールの読み込みを促す
+          if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({
+              type: "CHECK_NOTIFICATION_SCHEDULES",
+              time: new Date().toISOString(),
+            });
+            console.log(
+              "🔔 Service Workerに通知スケジュールの確認を依頼しました"
+            );
+          } else {
+            console.warn("⚠️ Service Workerコントローラーがありません");
+          }
+        })
+        .catch((error) => {
+          console.error("⚠️ Service Worker登録エラー:", error);
+          // エラー発生時もローカルに通知スケジュールを保存
+          localStorage.setItem(
+            "notification_error",
+            JSON.stringify({
+              time: now,
+              error: error.toString(),
+            })
+          );
+        });
     } else {
       const timeSinceLastInit = (now - lastInitTime) / 1000;
       console.log(
@@ -780,6 +807,16 @@ export default function Notification({
       }
     }, 60000); // 1分ごとに確認
 
+    // Service Workerのバージョン情報メッセージリスナーを追加
+    const handleVersionInfo = (event: MessageEvent) => {
+      if (event.data && event.data.type === "SW_VERSION_INFO") {
+        console.log("🔔 Service Workerバージョン情報:", event.data);
+      }
+    };
+
+    // イベントリスナーを登録
+    navigator.serviceWorker.addEventListener("message", handleVersionInfo);
+
     // コンポーネントのアンマウント時にクリーンアップ
     return () => {
       if (audioRef.current) {
@@ -787,8 +824,15 @@ export default function Notification({
         audioRef.current = null;
       }
       clearInterval(wakeInterval);
+
+      // イベントリスナーを削除
+      navigator.serviceWorker.removeEventListener("message", handleVersionInfo);
     };
-  }, [registerServiceWorker, requestBackgroundSync]);
+  }, [
+    registerServiceWorker,
+    requestBackgroundSync,
+    requestNotificationPermission,
+  ]);
 
   // ローカルストレージから通知スケジュールを読み込むuseEffect
   useEffect(() => {
@@ -1023,120 +1067,6 @@ export default function Notification({
     notificationPermission,
     playNotificationSound,
   ]);
-
-  // 通知音を再生する処理
-  const handleNotificationForMedicine = useCallback(
-    (medicine: Medicine) => {
-      const now = Date.now();
-      const lastNotification = lastNotificationRef.current;
-
-      // 同じ薬の通知が短時間に複数回来た場合は無視
-      if (
-        medicine.id === lastNotification.id &&
-        now - lastNotification.time < NOTIFICATION_DEBOUNCE_MS
-      ) {
-        console.log(
-          `${medicine.name}の通知は最近処理済み(${Math.floor(
-            (now - lastNotification.time) / 1000
-          )}秒前)のためスキップします`
-        );
-        return;
-      }
-
-      // 最終通知情報を更新
-      lastNotificationRef.current = {
-        time: now,
-        id: medicine.id,
-      };
-
-      console.log(`${medicine.name}の通知を処理します`);
-      setNotificationMedicine(medicine);
-      setShowNotification(true);
-
-      // 音声を再生
-      playNotificationSound();
-    },
-    [playNotificationSound]
-  );
-
-  // Service Workerからのメッセージを処理
-  useEffect(() => {
-    const handleServiceWorkerMessage = (event: MessageEvent) => {
-      // デバッグ応答をスキップ
-      if (event.data?.type === "DEBUG_RESPONSE") {
-        return;
-      }
-
-      // 通知音再生のリクエスト
-      if (event.data?.type === "PLAY_NOTIFICATION_SOUND") {
-        const now = Date.now();
-        const medicineId = event.data.medicineId;
-
-        // メッセージの重複防止処理
-        const messageKey = `${event.data.type}-${
-          medicineId || "unknown"
-        }-${Math.floor(now / 1000)}`;
-        const lastMessageTime =
-          messageEventRef.current.sentMessages.get(messageKey) || 0;
-
-        if (now - lastMessageTime < NOTIFICATION_DEBOUNCE_MS) {
-          console.log(
-            `重複メッセージを検出しました: ${messageKey} (${
-              now - lastMessageTime
-            }ms)`
-          );
-          return;
-        }
-
-        messageEventRef.current.sentMessages.set(messageKey, now);
-
-        // マップサイズを制限（古いエントリを削除）
-        if (messageEventRef.current.sentMessages.size > 50) {
-          const oldestKey = [
-            ...messageEventRef.current.sentMessages.keys(),
-          ].sort()[0];
-          messageEventRef.current.sentMessages.delete(oldestKey);
-        }
-
-        console.log("Service Workerからの通知要求:", event.data);
-
-        // 特定の薬の通知リクエスト
-        if (medicineId) {
-          // その薬を探す
-          const medicine = medicines.find((m) => m.id === medicineId);
-          if (medicine) {
-            handleNotificationForMedicine(medicine);
-          } else {
-            // medicineが見つからなくても通知音だけは再生
-            playNotificationSound();
-          }
-        } else {
-          // 特定の薬IDがなければ、通知音だけ再生
-          playNotificationSound();
-        }
-      }
-    };
-
-    // Service Workerからのメッセージリスナーを登録
-    if (navigator.serviceWorker) {
-      navigator.serviceWorker.addEventListener(
-        "message",
-        handleServiceWorkerMessage
-      );
-      console.log("Service Workerメッセージリスナーを登録しました");
-    }
-
-    // クリーンアップ関数
-    return () => {
-      if (navigator.serviceWorker) {
-        navigator.serviceWorker.removeEventListener(
-          "message",
-          handleServiceWorkerMessage
-        );
-        console.log("Service Workerメッセージリスナーを削除しました");
-      }
-    };
-  }, [medicines, handleNotificationForMedicine, playNotificationSound]);
 
   if (!showNotification || !notificationMedicine) return null;
 

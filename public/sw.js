@@ -1,6 +1,8 @@
 // Service Worker for おくすりリマインダー
 
-const CACHE_NAME = "medicine-reminder-v2";
+// キャッシュバージョンを更新（新しいSWを確実に適用するため）
+const CACHE_NAME = "medicine-reminder-v3";
+const SW_VERSION = "1.0.2"; // 明示的なバージョン管理
 
 // 音声ファイルのパス（アプリ全体で統一）
 const SOUND_FILE_PATH = "/sounds/001_zundamon_okusuri.wav";
@@ -40,14 +42,14 @@ const NOTIFICATION_MIN_INTERVAL = 3000; // 3秒 - 同一薬の通知間隔
 
 // インストール時に実行
 self.addEventListener("install", (event) => {
-  console.log("Service Worker: インストール中");
+  console.log(`Service Worker v${SW_VERSION}: インストール中`);
   self.skipWaiting(); // すぐにアクティブになる
 
   event.waitUntil(
     caches
       .open(CACHE_NAME)
       .then((cache) => {
-        console.log("Service Worker: キャッシュを開きました");
+        console.log(`Service Worker v${SW_VERSION}: キャッシュを開きました`);
 
         // 音声ファイルを優先的にキャッシュ
         return fetch(SOUND_FILE_PATH, { cache: "no-store" })
@@ -58,13 +60,13 @@ self.addEventListener("install", (event) => {
               );
             }
             console.log(
-              `Service Worker: 音声ファイル ${SOUND_FILE_PATH} をキャッシュしました`
+              `Service Worker v${SW_VERSION}: 音声ファイル ${SOUND_FILE_PATH} をキャッシュしました`
             );
             return cache.put(SOUND_FILE_PATH, response.clone());
           })
           .catch((error) => {
             console.error(
-              `Service Worker: 音声ファイルのキャッシュエラー: ${error}`
+              `Service Worker v${SW_VERSION}: 音声ファイルのキャッシュエラー: ${error}`
             );
           })
           .then(() => {
@@ -91,14 +93,17 @@ self.addEventListener("install", (event) => {
           });
       })
       .catch((error) => {
-        console.error("Service Worker: キャッシュ処理に失敗", error);
+        console.error(
+          `Service Worker v${SW_VERSION}: キャッシュ処理に失敗`,
+          error
+        );
       })
   );
 });
 
 // アクティベート時に実行
 self.addEventListener("activate", (event) => {
-  console.log("Service Worker: アクティブ化");
+  console.log(`Service Worker v${SW_VERSION}: アクティブ化`);
 
   // すぐにコントロールを取得
   event.waitUntil(
@@ -114,7 +119,10 @@ self.addEventListener("activate", (event) => {
               return cacheName !== CACHE_NAME;
             })
             .map((cacheName) => {
-              console.log("Service Worker: 古いキャッシュを削除中", cacheName);
+              console.log(
+                `Service Worker v${SW_VERSION}: 古いキャッシュを削除中`,
+                cacheName
+              );
               return caches.delete(cacheName);
             })
         );
@@ -130,6 +138,18 @@ self.addEventListener("activate", (event) => {
 
   // 定期的な通知チェックを開始
   setPeriodicNotificationCheck();
+
+  // バージョン情報をクライアントに通知
+  self.clients.matchAll().then((clients) => {
+    clients.forEach((client) => {
+      client.postMessage({
+        type: "SW_VERSION_INFO",
+        version: SW_VERSION,
+        cache: CACHE_NAME,
+        time: new Date().toISOString(),
+      });
+    });
+  });
 });
 
 // Service Workerがアクティブになったらスケジュールと定期チェックを開始
